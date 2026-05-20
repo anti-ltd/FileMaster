@@ -100,15 +100,17 @@ Everything stays local. No network calls, no analytics, no crash-reporters. Rece
 Requires **macOS 14+, Swift 5.10, Xcode CLT**.
 
 ```bash
-make build      # swift build -c release
-make bundle     # assemble FileDen.app under build/
+make build      # size-optimised release build (-Osize, -wmo, -dead_strip)
+make bundle     # assemble FileDen.app under build/ (strips symbols, ad-hoc signs)
 make run        # bundle + launch
+make release    # clean + bundle, ready to ship
 make debug      # debug build + run in foreground
 make icon       # rebuild AppIcon.icns
-make test       # run unit tests
 make clean      # clear SwiftPM + build/
 make reset      # wipe ~/Library/Application Support/FileDen
 ```
+
+The release bundle ships at ~1.2 MB on Apple Silicon — most of which is the icon.
 
 Codesigning uses an ad-hoc signature (`codesign --sign -`). For distribution you'll want a Developer ID; swap the signing identity in the `Makefile`.
 

@@ -42,3 +42,7 @@ Icon
 
 # Logs
 *.log
+
+# Image-tool side-effects
+*.original.png
+banner-orig.png

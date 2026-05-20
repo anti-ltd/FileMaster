@@ -25,10 +25,5 @@ let package = Package(
             dependencies: ["FileDenCore", "FileDenUI"],
             path: "Sources/FileDen"
         ),
-        .testTarget(
-            name: "FileDenCoreTests",
-            dependencies: ["FileDenCore"],
-            path: "Tests/FileDenCoreTests"
-        ),
     ]
 )

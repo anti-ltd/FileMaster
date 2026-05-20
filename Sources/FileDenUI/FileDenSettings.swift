@@ -1,13 +1,19 @@
 import Foundation
 
+/// User-tunable settings, persisted to `UserDefaults` and observed by SwiftUI.
+///
+/// Each property writes through to `UserDefaults` on `didSet`, so flipping a
+/// setting from anywhere (the popover, code, defaults write) takes effect
+/// immediately for every observer.
 final class FileDenSettings: ObservableObject {
     static let shared = FileDenSettings()
 
+    /// When true, sharing a folder skips the format prompt and always zips.
     @Published var autoZipOnShare: Bool {
         didSet { UserDefaults.standard.set(autoZipOnShare, forKey: "autoZipOnShare") }
     }
 
-    // -1 means no shortcut set
+    /// macOS virtual keycode for the global new-den hotkey. `-1` = unset.
     @Published var shortcutKeyCode: Int {
         didSet { UserDefaults.standard.set(shortcutKeyCode, forKey: "shortcutKeyCode") }
     }

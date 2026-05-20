@@ -1,6 +1,7 @@
 import SwiftUI
 import AppKit
 import QuickLookUI
+import FileDenCore
 
 struct ActionsMenuButton: NSViewRepresentable {
     var title: String? = nil
@@ -158,9 +159,7 @@ enum FileActions {
             .contains(url.pathExtension.lowercased())
     }
 
-    static func isDirectory(_ url: URL) -> Bool {
-        (try? url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
+    static func isDirectory(_ url: URL) -> Bool { url.isDirectoryItem }
 }
 
 final class ActionBridge: NSObject {

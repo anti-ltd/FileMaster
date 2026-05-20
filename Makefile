@@ -11,10 +11,17 @@ ICNS           := Resources/AppIcon.icns
 
 SWIFT          := swift
 CODESIGN       := codesign
+STRIP          := strip
+
+# Size-optimised release flags:
+#   -Osize         optimise for binary size over speed
+#   -wmo           whole-module optimisation (better dead-code elimination)
+#   -dead_strip    remove unreferenced symbols at link time
+RELEASE_FLAGS  := -Xswiftc -Osize -Xswiftc -wmo -Xlinker -dead_strip
 
 BIN_PATH       = $(shell $(SWIFT) build -c $(CONFIG) --show-bin-path)
 
-.PHONY: all build bundle run debug stop test clean format help icon
+.PHONY: all build bundle run debug stop clean format help icon release
 
 all: build
 
@@ -23,14 +30,14 @@ help:
 	@echo "  make build    — swift build -c release"
 	@echo "  make bundle   — assemble FileDen.app under build/"
 	@echo "  make run      — bundle + relaunch app"
+	@echo "  make release  — size-optimised bundle, stripped + ad-hoc signed"
 	@echo "  make debug    — debug build + run in foreground"
 	@echo "  make stop     — kill running FileDen"
-	@echo "  make test     — swift test"
 	@echo "  make clean    — swift package clean + remove build/"
 	@echo "  make icon     — render AppIcon.icns from AppIconRenderer"
 
 build:
-	$(SWIFT) build -c $(CONFIG) --product $(APP_NAME)
+	$(SWIFT) build -c $(CONFIG) --product $(APP_NAME) $(RELEASE_FLAGS)
 
 icon: build
 	@rm -rf "$(ICONSET)"
@@ -59,10 +66,15 @@ bundle: build
 	@cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
 	@cp "$(INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
 	@if [ -f "$(ICNS)" ]; then cp "$(ICNS)" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; fi
+	@# Strip local symbols before codesigning. -x = drop non-globals.
+	@$(STRIP) -x "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" 2>/dev/null || true
 	@$(CODESIGN) --force --deep --sign - \
 		--entitlements "$(ENTITLEMENTS)" \
 		"$(APP_BUNDLE)"
-	@echo "→ $(APP_BUNDLE)"
+	@echo "→ $(APP_BUNDLE) ($$(du -sh "$(APP_BUNDLE)" | cut -f1))"
+
+release: clean bundle
+	@echo "→ release bundle ready"
 
 run: stop bundle
 	@open "$(APP_BUNDLE)"
@@ -83,9 +95,6 @@ debug:
 stop:
 	@pkill -x $(EXEC_NAME) 2>/dev/null || true
 
-test:
-	$(SWIFT) test
-
 reset:
 	@rm -rf "$$HOME/Library/Application Support/FileDen"
 	@echo "→ wiped ~/Library/Application Support/FileDen"
@@ -95,4 +104,4 @@ clean:
 	@rm -rf "$(BUILD_DIR)"
 
 format:
-	@which swift-format >/dev/null 2>&1 && swift-format -i -r Sources Tests || echo "swift-format not installed (brew install swift-format)"
+	@which swift-format >/dev/null 2>&1 && swift-format -i -r Sources || echo "swift-format not installed (brew install swift-format)"

@@ -17,7 +17,7 @@ struct ShelfView: View {
     var onResize: ((CGSize) -> Void)? = nil
     var onEmpty: ((@escaping () -> Void) -> Void)? = nil
     var onItemsReceived: (() -> Void)? = nil
-    var onItemsChanged: ((Bool) -> Void)? = nil  // passes isEmpty
+    var onItemsChanged: ((Bool) -> Void)? = nil
     var onURLsChanged: (([URL]) -> Void)? = nil
     var initialURLs: [URL] = []
 
@@ -75,19 +75,15 @@ struct ShelfView: View {
         .onDisappear { stopDragMonitor() }
         .onChange(of: items.isEmpty) { _, empty in onItemsChanged?(empty) }
         .onChange(of: items.map(\.url)) { _, urls in onURLsChanged?(urls) }
-        .onChange(of: isExpanded) { _, expanded in
-            let size = expanded ? expandedSize : compactSize
-            NotificationCenter.default.post(name: .shelfResizeRequested, object: size)
-        }
         .clipShape(RoundedRectangle(cornerRadius: 24))
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isExpanded)
         .onChange(of: isExpanded) { _, expanded in
-            onResize?(expanded ? expandedSize : compactSize)
+            let size = expanded ? expandedSize : compactSize
+            NotificationCenter.default.post(name: .shelfResizeRequested, object: size)
+            onResize?(size)
             if expanded {
                 itemsDealt = false
-                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) {
-                    itemsDealt = true
-                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { itemsDealt = true }
             }
         }
         .onAppear {
@@ -424,11 +420,7 @@ struct ShelfView: View {
         var dirs = 0
         var files = 0
         for it in items {
-            if (try? it.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true {
-                dirs += 1
-            } else {
-                files += 1
-            }
+            if it.url.isDirectoryItem { dirs += 1 } else { files += 1 }
         }
         let fileLabel = files == 1 ? "File" : "Files"
         let dirLabel = dirs == 1 ? "Folder" : "Folders"
@@ -438,16 +430,9 @@ struct ShelfView: View {
     }
 
     private var totalSize: String {
-        let total = items.compactMap { itemSize($0.url) }.reduce(0, +)
+        let total = items.compactMap(\.url.allocatedSize).reduce(0, +)
         if total <= 0 { return "Zero KB" }
         return ByteCountFormatter.string(fromByteCount: Int64(total), countStyle: .file)
-    }
-
-    private func itemSize(_ url: URL) -> Int? {
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey]
-        guard let vals = try? url.resourceValues(forKeys: keys) else { return nil }
-        if vals.isDirectory == true { return vals.totalFileAllocatedSize }
-        return vals.fileSize
     }
 
     private func remove(_ item: ShelfItem) {
@@ -527,14 +512,6 @@ struct ShelfView: View {
         selection.isEmpty ? items : items.filter { selection.contains($0.id) }
     }
 
-    private var shareButtonLabel: String {
-        if selection.isEmpty { return "Share All" }
-        if selection.count == 1, let item = items.first(where: { selection.contains($0.id) }) {
-            return "Share \(item.name)"
-        }
-        return "Share \(selection.count) Files"
-    }
-
     private var actionsButtonLabel: String {
         if selection.isEmpty { return "Actions" }
         if selection.count == 1, let item = items.first(where: { selection.contains($0.id) }) {
@@ -547,9 +524,7 @@ struct ShelfView: View {
         shareSourceView = view
         let targets = selectedItems
         shareTargets = targets
-        let hasDirectory = targets.contains {
-            (try? $0.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-        }
+        let hasDirectory = targets.contains { $0.url.isDirectoryItem }
         if hasDirectory {
             if FileDenSettings.shared.autoZipOnShare {
                 shareAsZip()
@@ -584,7 +559,7 @@ struct ShelfView: View {
     @discardableResult
     private func shell(_ command: String) -> Int32 {
         let proc = Process()
-        proc.launchPath = "/bin/zsh"
+        proc.launchPath = "/bin/sh"
         proc.arguments = ["-c", command]
         proc.launch()
         proc.waitUntilExit()
@@ -702,15 +677,10 @@ struct ExpandedItemView: View {
         }
     }
 
-    private var isDirectory: Bool {
-        (try? item.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
+    private var isDirectory: Bool { item.url.isDirectoryItem }
 
     private var fileSize: String {
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey]
-        guard let vals = try? item.url.resourceValues(forKeys: keys) else { return "" }
-        let size = vals.isDirectory == true ? vals.totalFileAllocatedSize : vals.fileSize
-        return ByteCountFormatter.string(fromByteCount: Int64(size ?? 0), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(item.url.allocatedSize ?? 0), countStyle: .file)
     }
 }
 
@@ -769,10 +739,7 @@ struct ExpandedListRowView: View {
     }
 
     private var fileSize: String {
-        let keys: Set<URLResourceKey> = [.isDirectoryKey, .fileSizeKey, .totalFileAllocatedSizeKey]
-        guard let vals = try? item.url.resourceValues(forKeys: keys) else { return "" }
-        let size = vals.isDirectory == true ? vals.totalFileAllocatedSize : vals.fileSize
-        return ByteCountFormatter.string(fromByteCount: Int64(size ?? 0), countStyle: .file)
+        ByteCountFormatter.string(fromByteCount: Int64(item.url.allocatedSize ?? 0), countStyle: .file)
     }
 }
 
@@ -781,9 +748,7 @@ struct ExpandedListRowView: View {
 struct ShelfItemView: View {
     let item: ShelfItem
 
-    private var isDirectory: Bool {
-        (try? item.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
-    }
+    private var isDirectory: Bool { item.url.isDirectoryItem }
 
     var body: some View {
         if isDirectory {
@@ -819,7 +784,7 @@ struct StackedFilesView: View {
     private var visibleItems: [ShelfItem] { Array(items.prefix(3).reversed()) }
 
     private func fileCard(item: ShelfItem) -> some View {
-        let isDir = (try? item.url.resourceValues(forKeys: [.isDirectoryKey]).isDirectory) == true
+        let isDir = item.url.isDirectoryItem
         return Group {
             if isDir {
                 ThumbnailView(url: item.url, size: CGSize(width: 160, height: 160), contentMode: .fit)

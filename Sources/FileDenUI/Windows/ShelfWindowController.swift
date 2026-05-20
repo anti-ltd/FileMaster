@@ -2,6 +2,8 @@ import AppKit
 import SwiftUI
 import FileDenCore
 
+/// Hosts a single den. Owns the borderless `NSPanel` and bridges the SwiftUI
+/// `ShelfView` to AppKit lifecycle events (resize, empty, close).
 public class ShelfWindowController: NSWindowController {
     private var emptyObserver: Any?
     var receivedDrop = false
@@ -47,7 +49,7 @@ public class ShelfWindowController: NSWindowController {
     override init(window: NSWindow?) { super.init(window: window) }
     required init?(coder: NSCoder) { super.init(coder: coder) }
 
-    // Called by DenManager.emptyAllDens
+    // Bound when ShelfView appears; `DenManager.emptyAllDens` posts to this id-filtered observer.
     private func registerEmptyHandler(_ handler: @escaping () -> Void) {
         let id = ObjectIdentifier(self)
         emptyObserver = NotificationCenter.default.addObserver(
@@ -90,8 +92,10 @@ public class ShelfWindowController: NSWindowController {
         if let obs = emptyObserver { NotificationCenter.default.removeObserver(obs) }
     }
 
+    /// Bring the den window forward without stealing key-window focus.
     public func show() { window?.orderFrontRegardless() }
 
+    /// Close the den, recording its contents to recents first.
     public override func close() {
         recordIfNeeded()
         window?.orderOut(nil)
