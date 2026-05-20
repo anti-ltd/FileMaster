@@ -70,7 +70,17 @@ public class DenManager {
         case .center:
             guard let screen = NSScreen.main else { return }
             let s = screen.visibleFrame
-            origin = NSPoint(x: s.midX - size.width / 2, y: s.midY - size.height / 2)
+            var x = s.midX - size.width / 2
+            var y = s.midY - size.height / 2
+            let others = dens.filter { $0 !== controller && $0.window?.isVisible == true }
+            if !others.isEmpty {
+                let offset = CGFloat(min(others.count, 6)) * 30
+                x += offset
+                y -= offset
+                x = max(s.minX + 8, min(x, s.maxX - size.width - 8))
+                y = max(s.minY + 8, min(y, s.maxY - size.height - 8))
+            }
+            origin = NSPoint(x: x, y: y)
         case .belowNotch:
             guard let screen = NSScreen.main else { return }
             let s = screen.visibleFrame

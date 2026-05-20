@@ -102,9 +102,9 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func newDen() {
-        NSApp.activate(ignoringOtherApps: true)
-        let controller = DenManager.shared.newDen(placement: .center)
-        controller.window?.orderFrontRegardless()
+        DispatchQueue.main.async {
+            DenManager.shared.newDen(placement: .center)
+        }
     }
 
     private func newDenMenuShortcut() -> (String, NSEvent.ModifierFlags)? {
