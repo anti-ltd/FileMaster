@@ -251,6 +251,11 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
             popover.performClose(nil)
         } else {
             popover.show(relativeTo: button.bounds, of: button, preferredEdge: .minY)
+            // A status-bar (accessory) app isn't active, so the popover opens
+            // unfocused and won't take keyboard input. Activate the app and make
+            // the popover's own window key so it's ready to use immediately.
+            NSApp.activate()
+            popover.contentViewController?.view.window?.makeKey()
         }
     }
 }
