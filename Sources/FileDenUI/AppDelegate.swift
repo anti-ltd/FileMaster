@@ -48,6 +48,10 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     public func applicationDidFinishLaunching(_ notification: Notification) {
+        // Clear any staging left over from a previous session before any tool
+        // writes new output. Safe here: the instance lock means we're the only
+        // FileDen running, so nothing is mid-operation.
+        Paths.clearStaging()
         setupStatusItem()
         _ = DenManager.shared
         GlobalShortcutManager.shared.start()

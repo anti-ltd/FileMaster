@@ -98,7 +98,7 @@ In the expanded view, the button label reflects context: *Actions*, *Actions: fi
 
 ## Privacy
 
-Everything stays local. No network calls, no analytics, no crash-reporters. Recent dens live in `~/Library/Application Support/FileDen`. Settings are in `UserDefaults`. Wipe with `make reset`.
+Everything stays local. No network calls, no analytics, no crash-reporters. Settings and the recents list live in `UserDefaults`. Files produced by tools (PDF ops, conversions, archives) are staged under `~/Library/Application Support/counter-ltd/fileden/Staging` and cleared at launch. Wipe with `make reset`.
 
 ---
 
@@ -114,7 +114,7 @@ make release    # clean + bundle, ready to ship
 make debug      # debug build + run in foreground
 make icon       # rebuild AppIcon.icns
 make clean      # clear SwiftPM + build/
-make reset      # wipe ~/Library/Application Support/FileDen
+make reset      # wipe ~/Library/Application Support/counter-ltd/fileden
 ```
 
 The release bundle ships at ~1.2 MB on Apple Silicon — most of which is the icon.

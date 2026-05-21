@@ -317,16 +317,16 @@ final class ActionBridge: NSObject {
     }
 
     @objc func zip() {
-        let tmp = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FileDen-\(Int(Date().timeIntervalSince1970)).zip")
+        let archive = Staging.dir("ZIP")
+            .appendingPathComponent("Archive-\(Int(Date().timeIntervalSince1970)).zip")
         let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
         let task = Process()
         task.launchPath = "/bin/sh"
-        task.arguments = ["-c", "zip -rq \(tmp.path.shellEscaped) \(paths)"]
+        task.arguments = ["-c", "zip -rq \(archive.path.shellEscaped) \(paths)"]
         try? task.run()
         task.waitUntilExit()
-        if FileManager.default.fileExists(atPath: tmp.path) {
-            NSWorkspace.shared.activateFileViewerSelecting([tmp])
+        if FileManager.default.fileExists(atPath: archive.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([archive])
         }
     }
 

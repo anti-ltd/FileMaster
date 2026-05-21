@@ -102,8 +102,8 @@ stop:
 	@pkill -x $(EXEC_NAME) 2>/dev/null || true
 
 reset:
-	@rm -rf "$$HOME/Library/Application Support/FileDen"
-	@echo "→ wiped ~/Library/Application Support/FileDen"
+	@rm -rf "$$HOME/Library/Application Support/counter-ltd/fileden"
+	@echo "→ wiped ~/Library/Application Support/counter-ltd/fileden"
 
 clean:
 	$(SWIFT) package clean
