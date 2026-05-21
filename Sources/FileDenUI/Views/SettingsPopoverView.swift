@@ -9,10 +9,6 @@ struct SettingsPopoverView: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            Text("FileDen")
-                .font(.headline)
-                .padding(.bottom, 12)
-
             Picker("", selection: $selectedTab) {
                 ForEach(SettingsTab.allCases) { tab in
                     Text(tab.title).tag(tab)
@@ -20,9 +16,6 @@ struct SettingsPopoverView: View {
             }
             .pickerStyle(.segmented)
             .padding(.bottom, 12)
-
-            Divider()
-                .padding(.bottom, 12)
 
             tabContent
         }
