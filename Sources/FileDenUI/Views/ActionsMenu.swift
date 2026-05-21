@@ -22,6 +22,7 @@ struct ActionsMenuButton: NSViewRepresentable {
             b.title = title
             b.bezelStyle = .inline
             b.font = .systemFont(ofSize: 12, weight: .medium)
+            b.cell?.lineBreakMode = .byTruncatingMiddle
         } else {
             let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
             b.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Actions")?
@@ -36,7 +37,10 @@ struct ActionsMenuButton: NSViewRepresentable {
     }
 
     func updateNSView(_ nsView: NSButton, context: Context) {
-        if let title, nsView.title != title { nsView.title = title }
+        if let title, nsView.title != title {
+            nsView.title = title
+            nsView.cell?.lineBreakMode = .byTruncatingMiddle
+        }
         context.coordinator.urls = urls
         context.coordinator.onShare = onShare
         context.coordinator.onRemove = onRemove

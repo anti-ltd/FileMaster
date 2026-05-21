@@ -21,7 +21,7 @@ public struct ToolContext: Sendable {
 @available(macOS 26, *)
 public enum ChatTools {
     public static func make(context: ToolContext) -> [any Tool] {
-        [CalculatorTool()]
+        [CalculatorTool(), MinMaxTool()]
     }
 }
 
@@ -45,6 +45,41 @@ struct CalculatorTool: Tool {
             ? String(Int(value))
             : String(format: "%.4f", value)
         return "\(arguments.expression) = \(result)"
+    }
+}
+
+/// Exact min/max finder for labeled numeric series. Small models reliably mis-rank
+/// close values (e.g. 2625 vs 2617) when scanning by eye; this tool is exact.
+@available(macOS 26, *)
+struct MinMaxTool: Tool {
+    let name = "find_min_max"
+    let description = "Find the minimum and maximum values in a labeled dataset. Use whenever the user asks for the highest, lowest, best, worst, peak, or bottom value in a list. Pass every label:value pair from the relevant column so no entries are missed."
+
+    @Generable
+    struct Arguments {
+        @Guide(description: "Comma-separated list of label:value pairs from the document, e.g. \"January:2863, February:2980, March:3445\". Currency symbols and spaces are fine and will be stripped.")
+        var entries: String
+    }
+
+    func call(arguments: Arguments) async throws -> String {
+        let pairs: [(String, Double)] = arguments.entries
+            .components(separatedBy: ",")
+            .compactMap { entry -> (String, Double)? in
+                let parts = entry.components(separatedBy: ":")
+                guard parts.count >= 2 else { return nil }
+                let label = parts.dropLast().joined(separator: ":").trimmingCharacters(in: .whitespaces)
+                let raw   = parts.last!
+                    .trimmingCharacters(in: .whitespaces)
+                    .filter { $0.isNumber || $0 == "." || $0 == "-" }
+                guard let value = Double(raw) else { return nil }
+                return (label, value)
+            }
+
+        guard let minPair = pairs.min(by: { $0.1 < $1.1 }),
+              let maxPair = pairs.max(by: { $0.1 < $1.1 })
+        else { return "No valid entries found." }
+
+        return "Minimum: \(minPair.0) (\(minPair.1)). Maximum: \(maxPair.0) (\(maxPair.1))."
     }
 }
 #endif

@@ -1,12 +1,20 @@
 import SwiftUI
 import WebKit
 
+/// WKWebView subclass that forwards scroll events to the parent responder so
+/// hovering over a chart never blocks the enclosing chat ScrollView.
+private final class PassthroughScrollWebView: WKWebView {
+    override func scrollWheel(with event: NSEvent) {
+        nextResponder?.scrollWheel(with: event)
+    }
+}
+
 /// Renders a self-contained SVG string inline using WKWebView.
 struct SVGView: NSViewRepresentable {
     let svg: String
 
     func makeNSView(context: Context) -> WKWebView {
-        let wv = WKWebView()
+        let wv = PassthroughScrollWebView()
         wv.setValue(false, forKey: "drawsBackground")
         return wv
     }

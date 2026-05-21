@@ -345,7 +345,8 @@ struct ShelfView: View {
                     onAsk: { urls in enterAsk(urls: urls) }
                 )
                 .frame(height: 20)
-                .fixedSize()
+                .fixedSize(horizontal: false, vertical: true)
+                .layoutPriority(-1)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -396,6 +397,11 @@ struct ShelfView: View {
                     }
                 }
                 Spacer()
+                if let s = askSession {
+                    Text(s.modelLabel)
+                        .font(.system(size: 11, weight: .regular))
+                        .foregroundStyle(.tertiary)
+                }
                 Button(action: { withAnimation { isAsking = false } }) {
                     Image(systemName: "xmark")
                         .font(.system(size: 12, weight: .semibold))

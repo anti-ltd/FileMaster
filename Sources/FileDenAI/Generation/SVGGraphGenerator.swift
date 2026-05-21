@@ -14,6 +14,9 @@ public enum SVGGraphGenerator {
         public let title: String
         public let labels: [String]
         public let values: [Double]
+        /// Optional explicit Y-axis minimum. When set, the axis floor is this value
+        /// instead of 0, making small differences between large values visible.
+        public let yMin: Double?
     }
 
     // MARK: - Parsing
@@ -57,7 +60,8 @@ public enum SVGGraphGenerator {
         let labels = rawLabels.components(separatedBy: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
         let values = rawValues.components(separatedBy: ",").compactMap { Double($0.trimmingCharacters(in: .whitespaces)) }
         guard labels.count == values.count, !labels.isEmpty else { return nil }
-        return Spec(type: type, title: inner("title") ?? "", labels: labels, values: values)
+        let yMin = inner("yMin").flatMap { Double($0) }
+        return Spec(type: type, title: inner("title") ?? "", labels: labels, values: values, yMin: yMin)
     }
 
     /// Fallback: detect a ```json ... ``` or ``` ... ``` fence whose content looks
@@ -96,7 +100,8 @@ public enum SVGGraphGenerator {
             return nil
         }
         guard labels.count == values.count, !labels.isEmpty else { return nil }
-        return Spec(type: type, title: obj["title"] as? String ?? "", labels: labels, values: values)
+        let yMin = obj["yMin"] as? Double ?? (obj["yMin"] as? Int).map { Double($0) }
+        return Spec(type: type, title: obj["title"] as? String ?? "", labels: labels, values: values, yMin: yMin)
     }
 
     /// Remove the graph spec (tag or code block) from model text, leaving only prose.
@@ -136,6 +141,8 @@ public enum SVGGraphGenerator {
         let mL = 48.0, mR = 16.0, mT = 38.0, mB = 58.0
         let cW = w - mL - mR, cH = h - mT - mB
         let maxVal = spec.values.max() ?? 1
+        let minVal = spec.yMin ?? 0
+        let rng    = maxVal - minVal == 0 ? 1 : maxVal - minVal
         let n = spec.values.count
         let gap = cW / Double(n)
         let bW  = gap * 0.58
@@ -144,7 +151,7 @@ public enum SVGGraphGenerator {
 
         for i in 0..<n {
             let v     = spec.values[i]
-            let bH    = (v / maxVal) * cH
+            let bH    = ((v - minVal) / rng) * cH
             let x     = mL + Double(i) * gap + (gap - bW) / 2
             let y     = mT + cH - bH
             let color = colors[i % colors.count]
@@ -153,11 +160,11 @@ public enum SVGGraphGenerator {
             bars += "<text x=\"\(f(x+bW/2))\" y=\"\(f(mT+cH+15))\" text-anchor=\"middle\" font-size=\"11\" fill=\"#666\">\(esc(spec.labels[i]))</text>"
         }
 
-        let step = niceStep(maxVal, steps: 4)
+        let step = niceStep(rng, steps: 4)
         var grid = ""
-        var tick = step
+        var tick = (minVal / step).rounded(.up) * step
         while tick <= maxVal * 1.05 {
-            let y = mT + cH - (tick / maxVal) * cH
+            let y = mT + cH - ((tick - minVal) / rng) * cH
             grid += "<line x1=\"\(f(mL))\" y1=\"\(f(y))\" x2=\"\(f(mL+cW))\" y2=\"\(f(y))\" stroke=\"#e5e5e5\" stroke-width=\"1\"/>"
             grid += "<text x=\"\(f(mL-6))\" y=\"\(f(y+4))\" text-anchor=\"end\" font-size=\"10\" fill=\"#999\">\(fv(tick))</text>"
             tick += step
@@ -212,7 +219,7 @@ public enum SVGGraphGenerator {
         let mL = 48.0, mR = 16.0, mT = 38.0, mB = 58.0
         let cW = w - mL - mR, cH = h - mT - mB
         let maxVal = spec.values.max() ?? 1
-        let minVal = min(0, spec.values.min() ?? 0)
+        let minVal = spec.yMin ?? min(0, spec.values.min() ?? 0)
         let rng    = maxVal - minVal == 0 ? 1 : maxVal - minVal
         let n      = spec.values.count
         let color  = palette(1)[0]

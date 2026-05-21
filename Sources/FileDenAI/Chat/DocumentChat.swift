@@ -196,7 +196,9 @@ public final class DocumentChat: @unchecked Sendable {
         let cues: Set<String> = [
             "total", "subtotal", "sum", "altogether", "subtract", "minus", "plus",
             "multiply", "multiplied", "product", "divide", "divided", "average",
-            "percent", "percentage", "calculate", "compute", "times", "difference"
+            "percent", "percentage", "calculate", "compute", "times", "difference",
+            "lowest", "highest", "minimum", "maximum", "lowest", "best", "worst",
+            "peak", "bottom", "least", "most", "smallest", "largest", "min", "max"
         ]
         let words = Set(q.components(separatedBy: CharacterSet.alphanumerics.inverted).filter { !$0.isEmpty })
         if !words.isDisjoint(with: cues) { return true }
@@ -213,9 +215,10 @@ public final class DocumentChat: @unchecked Sendable {
             }.joined(separator: "\n")
             parts.append("Conversation so far:\n\(convo)")
         }
-        let context = citations.enumerated().map { index, citation in
+        let rawContext = citations.enumerated().map { index, citation in
             "[\(index + 1)] (\(citation.sourceURL.lastPathComponent), \(citation.locationLabel))\n\(citation.chunk.text)"
         }.joined(separator: "\n\n")
+        let context = TableDataAnnotator.annotate(rawContext)
         parts.append("Excerpts from the documents:\n\(context)")
         parts.append("User: \(question)")
         return parts.joined(separator: "\n\n")

@@ -92,12 +92,25 @@ struct QAView: View {
                 }
             } else {
                 if !message.text.isEmpty {
-                    Text(message.text)
-                        .font(.system(size: 13))
-                        .foregroundStyle(.primary)
-                        .textSelection(.enabled)
-                        .fixedSize(horizontal: false, vertical: true)
-                        .frame(maxWidth: .infinity, alignment: .leading)
+                    let parts = message.text.components(separatedBy: "Generating graph…")
+                    let prose = parts[0].trimmingCharacters(in: .whitespacesAndNewlines)
+                    let generatingGraph = parts.count > 1
+                    if !prose.isEmpty {
+                        Text(prose)
+                            .font(.system(size: 13))
+                            .foregroundStyle(.primary)
+                            .textSelection(.enabled)
+                            .fixedSize(horizontal: false, vertical: true)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                    }
+                    if generatingGraph {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Generating graph…")
+                                .font(.system(size: 12))
+                                .foregroundStyle(.secondary)
+                        }
+                    }
                 }
                 if let svg = message.svg {
                     let size = svgNaturalSize(svg)
@@ -136,6 +149,16 @@ struct QAView: View {
 
     private var inputBar: some View {
         HStack(spacing: 8) {
+            if session.hasMessages {
+                Button(action: { session.clearChat() }) {
+                    Image(systemName: "trash")
+                        .font(.system(size: 14))
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.plain)
+                .help("Clear chat")
+                .disabled(session.isBusy)
+            }
             TextField("Ask a question…", text: $question, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)

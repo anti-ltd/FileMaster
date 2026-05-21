@@ -34,6 +34,12 @@ final class QASession: ObservableObject {
 
     var hasMessages: Bool { !messages.isEmpty }
 
+    var modelLabel: String {
+        let config = FileDenSettings.shared.llmConfiguration
+        if config.provider == .appleIntelligence { return "Apple Intelligence" }
+        return config.model.isEmpty ? config.provider.displayName : config.model
+    }
+
     var llmAvailable: Bool {
         let provider = LLMConfiguration.Provider(rawValue: FileDenSettings.shared.llmProvider)
             ?? .appleIntelligence
@@ -80,6 +86,13 @@ final class QASession: ObservableObject {
 
     // MARK: - Chatting
 
+    func clearChat() {
+        turnTask?.cancel()
+        turnTask = nil
+        messages = []
+        isBusy = false
+    }
+
     func send(_ question: String) {
         let trimmed = question.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !trimmed.isEmpty, !isBusy, phase == .ready, let chat else { return }
@@ -99,7 +112,7 @@ final class QASession: ObservableObject {
                 case .citations(let citations):
                     self?.update(assistantID) { $0.citations = citations }
                 case .partialText(let text):
-                    self?.update(assistantID) { $0.text = text }
+                    self?.update(assistantID) { $0.text = Self.stripGraphTag(text) }
                 case .completed(let text, _, let svg):
                     self?.update(assistantID) { $0.text = text; $0.svg = svg; $0.isStreaming = false }
                 }
@@ -112,6 +125,23 @@ final class QASession: ObservableObject {
     private func update(_ id: UUID, _ change: (inout ChatMessage) -> Void) {
         guard let index = messages.firstIndex(where: { $0.id == id }) else { return }
         change(&messages[index])
+    }
+
+    /// Strip `<graph>…</graph>` from streaming text so the raw spec is never shown.
+    /// While the tag is still open (closing tag not yet received) everything from
+    /// `<graph>` onward is hidden; once complete the whole block is removed.
+    private static func stripGraphTag(_ text: String) -> String {
+        if let start = text.range(of: "<graph>"),
+           let end   = text.range(of: "</graph>") {
+            let before = String(text[text.startIndex..<start.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            let after  = String(text[end.upperBound...]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [before, after].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        if let start = text.range(of: "<graph>") {
+            let before = String(text[text.startIndex..<start.lowerBound]).trimmingCharacters(in: .whitespacesAndNewlines)
+            return [before, "Generating graph…"].filter { !$0.isEmpty }.joined(separator: "\n\n")
+        }
+        return text
     }
 
     private nonisolated static func message(for error: Error) -> String {

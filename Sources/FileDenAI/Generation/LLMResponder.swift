@@ -21,7 +21,11 @@ enum LLMResponder {
     /// in arithmetic terms.
     private static let arithmeticGuidance = """
     Only when the user explicitly asks you to compute something over numbers in the documents — a \
-    total, sum, difference, product, or percentage — call the `calculate` tool and report its result. \
+    total, sum, difference, product, percentage, minimum, maximum, highest, or lowest — use the \
+    appropriate tool and report its result. \
+    For totals, sums, and arithmetic: call `calculate`. \
+    For finding the highest or lowest value in a list: call `find_min_max`, passing EVERY label:value \
+    pair from the relevant column so nothing is missed — close values are easy to mis-read by eye. \
     When the numbers live in a table with several columns, take the values from the exact column the \
     user named (e.g. revenue, not users), passing them as written (keep the currency symbols).
     """
@@ -32,6 +36,10 @@ enum LLMResponder {
     EXACTLY this format — the raw XML tag with JSON inside, no markdown code fences, no extra \
     formatting: <graph>{"type":"TYPE","title":"TITLE","labels":["Label1","Label2"],"values":[1.0,2.0]}</graph> \
     Supported types: "bar" for comparing categories, "pie" for proportions, "line" for trends. \
+    Optional field "yMin": set this to the minimum Y-axis value when the user asks for an adaptive \
+    or relative Y-axis (e.g. "start from the lowest value", "adaptive scale", "zoom in on differences"). \
+    Set "yMin" to the smallest value in the dataset (or slightly below it) so small differences are visible. \
+    Example with adaptive axis: <graph>{"type":"bar","title":"Monthly Income","labels":["Jan","Feb"],"values":[2800,2900],"yMin":2700}</graph> \
     IMPORTANT: Do NOT wrap it in ```json or any code block. Write the <graph> tag directly in \
     your response. You may add one sentence of context before or after. Output at most one graph tag.
     """
