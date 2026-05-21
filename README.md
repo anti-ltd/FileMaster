@@ -32,15 +32,15 @@
 
 FileDen is a tiny floating window — a "den" — that holds files while you move them between apps, archives, uploads, and conversations. Drag in. Drag out. Drop a folder, get a zip. Shake your mouse, get a fresh den near the cursor. Hit a hotkey, same. Close it, the contents go to recents.
 
-And now it can *read* them: drop documents into a den and **Ask** questions about them in plain language — answered entirely on-device, with clickable citations. See [Ask](#ask-offline-document-qa).
+And now it can *read* them: drop documents into a den and **chat** with them — ask questions in a conversation and get grounded, cited answers, entirely on-device. See [Ask](#ask-chat-with-your-documents).
 
-Built in Swift + AppKit + SwiftUI for macOS 14+. No Electron, no background daemons, no telemetry. The document Q&A runs on Apple's on-device frameworks — nothing leaves your Mac.
+Built in Swift + AppKit + SwiftUI for macOS 14+. No Electron, no background daemons, no telemetry. The document chat runs on Apple's on-device frameworks — nothing leaves your Mac.
 
 ---
 
 ## Highlights
 
-- **Ask your documents, offline.** Drop in PDFs (scans included), Word, Markdown, text, or code, hit *Ask*, and get cited answers — fully on-device. [Details ↓](#ask-offline-document-qa)
+- **Chat with your documents, offline.** Drop in PDFs (scans included), Word, Markdown, text, or code, hit *Ask*, and have a conversation with cited answers — fully on-device. [Details ↓](#ask-chat-with-your-documents)
 - **Multiple dens.** Spawn as many as you want — each is independent.
 - **Drag-out as multi-file.** One drag carries the whole stack.
 - **Smart actions menu.** Open, Quick Look, Reveal, Copy, Duplicate, Copy Path, Compress to ZIP, Unarchive, Print, Set as Wallpaper, Combine to PDF, Share, Move to Trash — surfaced based on file type.
@@ -63,6 +63,7 @@ A den has two modes:
 |------|----------|
 | **Compact** | 200×200, dashed drop zone when empty, file thumbnail / stacked cards when full. Bottom-right action button. |
 | **Expanded** | 340×420, grid or list view of all items, multi-select with ⌘/⇧/⌃-click, actions button. |
+| **Ask** | Expands into a side-by-side split — files on the left, a chat with the documents on the right. Clicking a cited source opens a third pane showing it highlighted. Everything stays in the one den window. |
 
 Tap the file/stack to expand. Chevron back to collapse. The window floats above other apps and follows you across spaces.
 
@@ -86,7 +87,7 @@ The shortcut shown in the menu auto-mirrors whatever is configured. Disable the 
 The actions button (•••) replaces the share button and adapts to selection:
 
 - Always: Open, Quick Look, Reveal in Finder, Copy, Duplicate, Copy Path, Share…, Move to Trash.
-- Any searchable document in the selection (PDF / Word / Markdown / text / code / …) → **Ask AI…** ([offline Q&A](#ask-offline-document-qa)).
+- Any searchable document in the selection (PDF / Word / Markdown / text / code / …) → **Ask AI…** — opens an inline [chat](#ask-chat-with-your-documents) about it.
 - Folders or multiple items → **Compress to ZIP**.
 - All archives → **Unarchive**.
 - All printable (pdf/img/txt/rtf) → **Print**.
@@ -100,26 +101,27 @@ In the expanded view, the button label reflects context: *Actions*, *Actions: fi
 
 ---
 
-## Ask (offline document Q&A)
+## Ask: chat with your documents
 
-Drop documents into a den and hit **Ask** to question them in natural language — entirely on-device, no network, no API keys, no subscription. Built for the two things every other "chat with your PDFs" tool gets wrong: **accuracy** and **speed**.
+Drop documents into a den and hit **Ask** to have a conversation about them — entirely on-device, no network, no API keys, no subscription. The den widens into a split: your files on the left, the chat on the right. Built for the two things every other "chat with your PDFs" tool gets wrong: **accuracy** and **speed**.
 
+- **A real chat, not one-shot Q&A.** Multi-turn — ask a follow-up and it keeps the thread. Every answer is grounded in your own documents.
 - **Many formats, not just PDF.** PDF (with on-device OCR for scanned pages), Word (`.docx`), RTF, HTML, Markdown, plain text, CSV/TSV, JSON/YAML/TOML/INI, and source code.
-- **Hybrid retrieval.** Semantic search (Apple's `NLContextualEmbedding`) *and* keyword search (SQLite FTS5/BM25) are fused, so it catches both meaning *and* exact names, IDs, codes, and figures. Vectors are pre-normalised and scored with a single Accelerate matrix multiply — search is **sub-second** after indexing, not the minute-plus other tools take.
-- **Cited answers.** When Apple Intelligence is available, the on-device model writes a grounded answer and marks exactly which passages it used. Every citation is **clickable**: PDFs open to the page with the passage highlighted; text / Markdown / HTML / RTF / DOCX open to the highlighted span.
-- **Exact arithmetic.** Totals, sums, and counts are computed with a calculator tool — not guessed by the model — so "total revenue" returns the right number.
-- **Graceful fallback.** No Apple Intelligence (older Macs, or it's switched off)? Ask still works as fast, accurate semantic + keyword **passage search** with citations — only the written answer turns off.
-- **Notebooks.** Save a set of documents as a named notebook and reopen it from the menu bar to re-ask anytime. Indexes are cached, so reopening is instant.
+- **Hybrid retrieval = accuracy.** Semantic search (Apple's `NLContextualEmbedding`) *and* keyword search (SQLite FTS5/BM25) are fused, so it catches both meaning *and* exact names, IDs, codes, and figures. Vectors are pre-normalised and scored with a single Accelerate matrix multiply — search is **sub-second** after indexing, not the minute-plus other tools take.
+- **Cited, and clickable.** Each answer carries a small **sources** chip; open it for a quick rundown, then click a source to open it in a third pane — PDFs jump to the page with the passage highlighted; text / Markdown / HTML / RTF / DOCX scroll to the highlighted span. One window holds everything — no floating clutter.
+- **It uses tools.** The model can call a calculator for exact arithmetic, so "total revenue" returns the right number instead of a guess. The tool system is built to grow (document actions are next).
+- **Never a dead end.** No Apple Intelligence (older Macs, or it's switched off), or the model declines? Ask falls back to the most relevant passages with citations — same retrieval, just without the written prose. It never shows a failure.
+- **Notebooks.** Save a set of documents as a named notebook and reopen it from the menu bar to chat with it anytime. Indexes are cached, so reopening is instant.
 
-Open it from the **Ask** button in an expanded den, the **Ask AI…** item in the actions menu, or by saving a **Notebook** and choosing it from the menu bar. Turn the whole feature on or off — and toggle written answers — in **Settings → AI**.
+Open it from the **Ask AI…** item in a den's actions menu (or the sparkle button on a compact den), or by opening a saved **Notebook** from the menu bar. Turn the whole feature on or off — and toggle written answers vs. passages-only — in **Settings → AI**.
 
-**Requirements.** Indexing and passage search run on macOS 14+. Written answers use Apple's Foundation Models and need macOS 26 with Apple Intelligence enabled; the framework is weak-linked, so FileDen runs fine without it.
+**Requirements.** Indexing, retrieval, OCR, and passage search run on macOS 14+. Written answers use Apple's Foundation Models and need macOS 26 with Apple Intelligence enabled; the framework is weak-linked, so FileDen runs fine without it.
 
 ---
 
 ## Privacy
 
-Everything stays local — including the AI. Document Q&A runs entirely on Apple's on-device frameworks (`NaturalLanguage` embeddings, `Vision` OCR, `FoundationModels`); no text, no embeddings, and no questions ever leave your Mac. No network calls, no analytics, no crash-reporters.
+Everything stays local — including the AI. The document chat runs entirely on Apple's on-device frameworks (`NaturalLanguage` embeddings, `Vision` OCR, `FoundationModels`); no text, no embeddings, and no questions or answers ever leave your Mac. No network calls, no analytics, no crash-reporters.
 
 Settings and the recents list live in `UserDefaults`. Files produced by tools (PDF ops, conversions, archives) are staged under `~/Library/Application Support/counter-ltd/fileden/Staging` and cleared at launch. Ask's search indexes live under `…/Indices` and saved notebooks under `…/Notebooks` (kept across launches — clear indexes from *Settings → AI*, or wipe everything with `make reset`).
 
