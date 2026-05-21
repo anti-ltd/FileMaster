@@ -33,19 +33,19 @@ enum PDFTools {
             }
         }
         guard index > 0 else { return [] }
-        let dest = uniqueURL(in: stagingDir(), name: "Merged.pdf")
+        let dest = Staging.uniqueURL(in: Staging.dir("PDF"), name: "Merged.pdf")
         return out.write(to: dest) ? [dest] : []
     }
 
     /// Explode each PDF into one single-page PDF per page, gathered in a folder
     /// per source document.
     static func splitPages(_ urls: [URL]) -> [URL] {
-        let base = stagingDir()
+        let base = Staging.dir("PDF")
         var out: [URL] = []
         for url in urls {
             guard let doc = PDFDocument(url: url), doc.pageCount > 0 else { continue }
             let stem = url.deletingPathExtension().lastPathComponent
-            let folder = uniqueURL(in: base, name: "\(stem) pages", isDirectory: true)
+            let folder = Staging.uniqueURL(in: base, name: "\(stem) pages")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let width = max(2, String(doc.pageCount).count)
             for i in 0..<doc.pageCount {
@@ -62,12 +62,12 @@ enum PDFTools {
 
     /// Rasterize each page to a 2x PNG, gathered in a folder per source document.
     static func exportPageImages(_ urls: [URL]) -> [URL] {
-        let base = stagingDir()
+        let base = Staging.dir("PDF")
         var out: [URL] = []
         for url in urls {
             guard let doc = PDFDocument(url: url), doc.pageCount > 0 else { continue }
             let stem = url.deletingPathExtension().lastPathComponent
-            let folder = uniqueURL(in: base, name: "\(stem) images", isDirectory: true)
+            let folder = Staging.uniqueURL(in: base, name: "\(stem) images")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let width = max(2, String(doc.pageCount).count)
             for i in 0..<doc.pageCount {
@@ -85,12 +85,12 @@ enum PDFTools {
     /// streams are reconstructed from their decoded samples. Encodings we can't
     /// faithfully rebuild (indexed, CCITT/JBIG2 fax, etc.) are skipped.
     static func extractImages(_ urls: [URL]) -> [URL] {
-        let base = stagingDir()
+        let base = Staging.dir("PDF")
         var out: [URL] = []
         for url in urls {
             guard let doc = CGPDFDocument(url as CFURL), doc.numberOfPages > 0 else { continue }
             let stem = url.deletingPathExtension().lastPathComponent
-            let folder = uniqueURL(in: base, name: "\(stem) extracted", isDirectory: true)
+            let folder = Staging.uniqueURL(in: base, name: "\(stem) extracted")
             try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
             let collector = ImageCollector(stem: stem, destDir: folder)
             for p in 1...doc.numberOfPages {
@@ -110,13 +110,13 @@ enum PDFTools {
     /// Lift the text layer out of each PDF into a `.txt` file. PDFs with no
     /// extractable text (e.g. pure scans) are skipped.
     static func extractText(_ urls: [URL]) -> [URL] {
-        let dir = stagingDir()
+        let dir = Staging.dir("PDF")
         var out: [URL] = []
         for url in urls {
             guard let doc = PDFDocument(url: url),
                   let text = doc.string, !text.isEmpty,
                   let data = text.data(using: .utf8) else { continue }
-            let dest = uniqueURL(in: dir, name: url.deletingPathExtension().lastPathComponent + ".txt")
+            let dest = Staging.uniqueURL(in: dir, name: url.deletingPathExtension().lastPathComponent + ".txt")
             if (try? data.write(to: dest)) != nil { out.append(dest) }
         }
         return out
@@ -135,7 +135,7 @@ enum PDFTools {
         let name = urls.count == 1
             ? urls[0].deletingPathExtension().lastPathComponent + ".pdf"
             : "Combined.pdf"
-        let dest = uniqueURL(in: stagingDir(), name: name)
+        let dest = Staging.uniqueURL(in: Staging.dir("PDF"), name: name)
         return pdf.write(to: dest) ? [dest] : []
     }
 
@@ -192,7 +192,7 @@ enum PDFTools {
         }
 
         private func write(_ data: Data, name: String) {
-            let dest = uniqueURL(in: destDir, name: name)
+            let dest = Staging.uniqueURL(in: destDir, name: name)
             if (try? data.write(to: dest)) != nil {
                 counter += 1
                 written.append(dest)
@@ -299,31 +299,5 @@ enum PDFTools {
 
     private static func pngData(from image: CGImage) -> Data? {
         NSBitmapImageRep(cgImage: image).representation(using: .png, properties: [:])
-    }
-
-    // MARK: - Staging
-
-    /// A fresh temp directory for one operation's output. Lives until the user
-    /// drags the results out of the den or the OS clears `tmp`.
-    private static func stagingDir() -> URL {
-        let dir = FileManager.default.temporaryDirectory
-            .appendingPathComponent("FileDen-PDF-\(Int(Date().timeIntervalSince1970))-\(UUID().uuidString.prefix(4))")
-        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
-        return dir
-    }
-
-    /// A non-colliding URL for `name` inside `dir`, appending " 2", " 3", … on clash.
-    static func uniqueURL(in dir: URL, name: String, isDirectory: Bool = false) -> URL {
-        let fm = FileManager.default
-        let ext = (name as NSString).pathExtension
-        let stem = (name as NSString).deletingPathExtension
-        var candidate = dir.appendingPathComponent(name)
-        var n = 2
-        while fm.fileExists(atPath: candidate.path) {
-            let next = ext.isEmpty ? "\(stem) \(n)" : "\(stem) \(n).\(ext)"
-            candidate = dir.appendingPathComponent(next)
-            n += 1
-        }
-        return candidate
     }
 }

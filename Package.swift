@@ -21,6 +21,7 @@ let package = Package(
             linkerSettings: [
                 .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("PDFKit"),
+                .linkedFramework("AVFoundation"),
             ]
         ),
         .executableTarget(

@@ -88,6 +88,7 @@ enum FileActions {
         let allPrintable = urls.allSatisfy { isPrintable($0) } && !urls.isEmpty
         let allArchives = urls.allSatisfy { isArchive($0) } && !urls.isEmpty
         let allPDFs = urls.allSatisfy { PDFTools.isPDF($0) } && !urls.isEmpty
+        let allVideos = urls.allSatisfy { VideoConvert.isVideo($0) } && !urls.isEmpty
 
         menu.addItem(item("Open", "arrow.up.forward.app",
                           #selector(ActionBridge.openItems), bridge))
@@ -124,9 +125,15 @@ enum FileActions {
                               #selector(ActionBridge.wallpaper), bridge))
             menu.addItem(item("Combine to PDF", "doc.badge.plus",
                               #selector(ActionBridge.combinePDF), bridge))
+            if let convert = convertImageMenu(bridge: bridge, urls: urls) {
+                menu.addItem(convert)
+            }
         }
         if allPDFs {
             menu.addItem(pdfToolsMenu(bridge: bridge, count: urls.count))
+        }
+        if allVideos {
+            menu.addItem(convertVideoMenu(bridge: bridge, urls: urls))
         }
 
         menu.addItem(.separator())
@@ -169,6 +176,64 @@ enum FileActions {
 
         let parent = NSMenuItem(title: "PDF Tools", action: nil, keyEquivalent: "")
         parent.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Convert Image" submenu. Visually-lossless format conversion; a target
+    /// every selected file already is — or one this OS can't encode (WebP/AVIF
+    /// vary by version) — gets hidden. Animated GIFs also get a → video item.
+    /// Nil if nothing's left to offer.
+    private static func convertImageMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem? {
+        let targets: [(ImageConvert.Format, Selector)] = [
+            (.jpeg, #selector(ActionBridge.convertToJPEG)),
+            (.heic, #selector(ActionBridge.convertToHEIC)),
+            (.png,  #selector(ActionBridge.convertToPNG)),
+            (.tiff, #selector(ActionBridge.convertToTIFF)),
+            (.webp, #selector(ActionBridge.convertToWebP)),
+            (.avif, #selector(ActionBridge.convertToAVIF)),
+        ]
+        let sub = NSMenu()
+        for (format, selector) in targets
+        where ImageConvert.canEncode(format) && !urls.allSatisfy({ format.matches($0) }) {
+            sub.addItem(item("To \(format.label)", "photo", selector, bridge))
+        }
+        if urls.allSatisfy({ $0.pathExtension.lowercased() == "gif" }) {
+            if !sub.items.isEmpty { sub.addItem(.separator()) }
+            sub.addItem(item("To Video (MP4)", "film", #selector(ActionBridge.convertGIFToVideo), bridge))
+        }
+        guard !sub.items.isEmpty else { return nil }
+
+        let parent = NSMenuItem(title: "Convert Image", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Convert Video" submenu. → HEVC re-encodes (smaller, visually lossless);
+    /// → MP4/MOV rewrap losslessly when possible. Container targets matching the
+    /// source extension are hidden. Results are staged into a new den.
+    private static func convertVideoMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem {
+        let sub = NSMenu()
+        sub.addItem(item("To HEVC (smaller)", "film",
+                         #selector(ActionBridge.convertToHEVC), bridge))
+        if !urls.allSatisfy({ $0.pathExtension.lowercased() == "mp4" }) {
+            sub.addItem(item("To MP4", "film", #selector(ActionBridge.convertToMP4), bridge))
+        }
+        if !urls.allSatisfy({ $0.pathExtension.lowercased() == "mov" }) {
+            sub.addItem(item("To MOV", "film", #selector(ActionBridge.convertToMOV), bridge))
+        }
+        sub.addItem(.separator())
+        sub.addItem(item("To GIF", "photo.stack",
+                         #selector(ActionBridge.convertToGIF), bridge))
+        sub.addItem(item("Poster Frame", "photo",
+                         #selector(ActionBridge.grabPoster), bridge))
+        sub.addItem(.separator())
+        sub.addItem(item("Extract Audio", "music.note",
+                         #selector(ActionBridge.extractAudio), bridge))
+
+        let parent = NSMenuItem(title: "Convert Video", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
         parent.submenu = sub
         return parent
     }
@@ -310,22 +375,71 @@ final class ActionBridge: NSObject {
 
     // MARK: - PDF tools
 
-    @objc func mergePDF()        { runPDF(PDFTools.merge) }
-    @objc func splitPDF()        { runPDF(PDFTools.splitPages) }
-    @objc func exportPDFImages() { runPDF(PDFTools.exportPageImages) }
-    @objc func extractPDFImages(){ runPDF(PDFTools.extractImages) }
-    @objc func extractPDFText()  { runPDF(PDFTools.extractText) }
-    @objc func combinePDF()      { runPDF(PDFTools.combineToPDF) }
+    @objc func mergePDF()        { runStaged("Merging PDFs", batch: PDFTools.merge) }
+    @objc func splitPDF()        { runStaged("Splitting PDF") { url, _ in PDFTools.splitPages([url]) } }
+    @objc func exportPDFImages() { runStaged("Exporting pages") { url, _ in PDFTools.exportPageImages([url]) } }
+    @objc func extractPDFImages(){ runStaged("Extracting images") { url, _ in PDFTools.extractImages([url]) } }
+    @objc func extractPDFText()  { runStaged("Extracting text") { url, _ in PDFTools.extractText([url]) } }
+    @objc func combinePDF()      { runStaged("Creating PDF", batch: PDFTools.combineToPDF) }
 
-    /// Run a PDF operation off the main thread, then stage whatever it produced
-    /// into a fresh den. Beeps if the operation yielded nothing.
-    private func runPDF(_ work: @escaping ([URL]) -> [URL]) {
+    // MARK: - Image conversion
+
+    @objc func convertToJPEG() { runStaged("Converting to JPEG") { url, _ in ImageConvert.convert([url], to: .jpeg) } }
+    @objc func convertToHEIC() { runStaged("Converting to HEIC") { url, _ in ImageConvert.convert([url], to: .heic) } }
+    @objc func convertToPNG()  { runStaged("Converting to PNG")  { url, _ in ImageConvert.convert([url], to: .png) } }
+    @objc func convertToTIFF() { runStaged("Converting to TIFF") { url, _ in ImageConvert.convert([url], to: .tiff) } }
+    @objc func convertToWebP() { runStaged("Converting to WebP") { url, _ in ImageConvert.convert([url], to: .webp) } }
+    @objc func convertToAVIF() { runStaged("Converting to AVIF") { url, _ in ImageConvert.convert([url], to: .avif) } }
+    @objc func convertGIFToVideo() { runStaged("GIF → video") { url, progress in VideoConvert.gifToVideo(url, progress: progress) } }
+
+    // MARK: - Video conversion
+
+    @objc func convertToHEVC() { runStaged("Converting to HEVC") { url, progress in VideoConvert.toHEVC(url, progress: progress) } }
+    @objc func convertToMP4()  { runStaged("Converting to MP4")  { url, progress in VideoConvert.toMP4(url, progress: progress) } }
+    @objc func convertToMOV()  { runStaged("Converting to MOV")  { url, progress in VideoConvert.toMOV(url, progress: progress) } }
+    @objc func extractAudio()  { runStaged("Extracting audio")   { url, progress in VideoConvert.extractAudio(url, progress: progress) } }
+    @objc func convertToGIF()  { runStaged("Converting to GIF")  { url, progress in VideoConvert.toGIF(url, progress: progress) } }
+    @objc func grabPoster()    { runStaged("Grabbing poster")    { url, progress in VideoConvert.posterFrame(url, progress: progress) } }
+
+    /// Run a per-file operation off the main thread, showing a progress HUD and
+    /// staging the combined output into a fresh den. `perFile` reports 0…1
+    /// progress for the current file; overall progress blends it across the
+    /// batch. Beeps if nothing was produced.
+    private func runStaged(_ label: String,
+                           perFile: @escaping (URL, @escaping (Double) -> Void) -> [URL]) {
         let inputs = urls
+        let hud = MainActor.assumeIsolated { ProgressHUD(label: label) }
         DispatchQueue.global(qos: .userInitiated).async {
-            let outputs = work(inputs)
+            var outputs: [URL] = []
+            let total = Double(inputs.count)
+            for (i, url) in inputs.enumerated() {
+                outputs += perFile(url) { sub in
+                    Task { @MainActor in hud.update((Double(i) + sub) / total) }
+                }
+                Task { @MainActor in hud.update(Double(i + 1) / total) }
+            }
+            let result = outputs
             Task { @MainActor in
-                guard !outputs.isEmpty else { NSSound.beep(); return }
-                DenManager.shared.openDen(with: outputs)
+                hud.finish()
+                if result.isEmpty { NSSound.beep() }
+                else { DenManager.shared.openDen(with: result) }
+            }
+        }
+    }
+
+    /// Variant for whole-batch operations (merge, combine) where per-file
+    /// progress isn't meaningful; shows an indeterminate HUD.
+    private func runStaged(_ label: String, batch: @escaping ([URL]) -> [URL]) {
+        let inputs = urls
+        let hud = MainActor.assumeIsolated { () -> ProgressHUD in
+            let h = ProgressHUD(label: label); h.indeterminate(); return h
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = batch(inputs)
+            Task { @MainActor in
+                hud.finish()
+                if result.isEmpty { NSSound.beep() }
+                else { DenManager.shared.openDen(with: result) }
             }
         }
     }
