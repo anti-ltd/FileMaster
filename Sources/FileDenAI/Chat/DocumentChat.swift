@@ -39,6 +39,15 @@ public final class DocumentChat: @unchecked Sendable {
                      topK: Int = 6) -> AsyncStream<ChatTurnEvent> {
         AsyncStream { continuation in
             let task = Task { [retrieve, documentURLs] in
+                // A query with no content word ("what?", "what is") can't anchor
+                // retrieval, and a small model will latch onto context noise — most
+                // visibly by echoing the previous answer. Ask for more instead.
+                if Self.isUnderspecified(question) {
+                    continuation.yield(.completed(text: Self.clarificationText, mode: .passagesOnly))
+                    continuation.finish()
+                    return
+                }
+
                 let citations = retrieve(question, topK)
                 continuation.yield(.citations(citations))
 
@@ -92,6 +101,26 @@ public final class DocumentChat: @unchecked Sendable {
         citations.isEmpty
             ? "I couldn't find anything about that in these documents."
             : "Here are the most relevant passages I found:"
+    }
+
+    static let clarificationText =
+        "Could you say a bit more about what you'd like to know? A few words to go on will get you a better answer."
+
+    /// True when a query carries no content word — only question words, articles,
+    /// and the like (e.g. "what?", "what is the"). Such queries give a small model
+    /// nothing to ground on, so the chat asks for more rather than synthesizing on
+    /// noise. Queries with any real term ("summarize for me", "revenue?") pass.
+    static func isUnderspecified(_ query: String) -> Bool {
+        let stopwords: Set<String> = [
+            "what", "who", "whom", "whose", "where", "when", "why", "how", "which",
+            "is", "are", "was", "were", "be", "am", "do", "does", "did",
+            "a", "an", "the", "of", "to", "for", "in", "on", "at", "and", "or",
+            "me", "you", "it", "this", "that", "these", "those", "there", "here"
+        ]
+        let words = query.lowercased()
+            .components(separatedBy: CharacterSet.alphanumerics.inverted)
+            .filter { !$0.isEmpty }
+        return words.allSatisfy { stopwords.contains($0) }
     }
 
     static func buildPrompt(question: String, history: [ChatMessage], citations: [Citation]) -> String {

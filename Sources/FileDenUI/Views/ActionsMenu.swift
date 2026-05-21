@@ -149,6 +149,7 @@ enum FileActions {
             if let convert = convertImageMenu(bridge: bridge, urls: urls) {
                 menu.addItem(convert)
             }
+            menu.addItem(compressImageMenu(bridge: bridge))
         }
         if allPDFs {
             menu.addItem(pdfToolsMenu(bridge: bridge, count: urls.count))
@@ -231,6 +232,31 @@ enum FileActions {
 
         let parent = NSMenuItem(title: "Convert Image", action: nil, keyEquivalent: "")
         parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Compress Image" submenu. Caps a photo at a chosen file size on-device —
+    /// for upload forms that reject anything bigger (e.g. Apple Developer's 5 MB
+    /// limit) without trusting the original to a web tool. Each item carries its
+    /// byte budget as `representedObject`. Results are staged into a new den.
+    private static func compressImageMenu(bridge: ActionBridge) -> NSMenuItem {
+        let presets: [(String, Int)] = [
+            ("Under 500 KB", 500_000),
+            ("Under 1 MB", 1_000_000),
+            ("Under 2 MB", 2_000_000),
+            ("Under 5 MB", 5_000_000),
+        ]
+        let sub = NSMenu()
+        for (label, bytes) in presets {
+            let i = NSMenuItem(title: label, action: #selector(ActionBridge.compress(_:)), keyEquivalent: "")
+            i.target = bridge
+            i.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+            i.representedObject = bytes
+            sub.addItem(i)
+        }
+        let parent = NSMenuItem(title: "Compress Image", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left", accessibilityDescription: nil)
         parent.submenu = sub
         return parent
     }
@@ -438,6 +464,12 @@ final class ActionBridge: NSObject {
     @objc func convertToWebP() { runStaged("Converting to WebP") { url, _ in ImageConvert.convert([url], to: .webp) } }
     @objc func convertToAVIF() { runStaged("Converting to AVIF") { url, _ in ImageConvert.convert([url], to: .avif) } }
     @objc func convertGIFToVideo() { runStaged("GIF → video") { url, progress in VideoConvert.gifToVideo(url, progress: progress) } }
+
+    @objc func compress(_ sender: NSMenuItem) {
+        guard let maxBytes = sender.representedObject as? Int else { return }
+        let cap = ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file)
+        runStaged("Compressing under \(cap)") { url, _ in ImageCompress.compress([url], maxBytes: maxBytes) }
+    }
 
     // MARK: - Video conversion
 

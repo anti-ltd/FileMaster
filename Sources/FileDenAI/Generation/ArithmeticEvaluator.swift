@@ -1,8 +1,11 @@
 import Foundation
 
 /// A tiny, crash-free arithmetic evaluator for `+ - * /` and parentheses over
-/// decimal numbers (thousands separators tolerated). Backs the LLM's calculator
-/// tool so totals/sums are computed exactly instead of guessed by the model.
+/// decimal numbers (thousands separators and currency symbols tolerated). Backs
+/// the LLM's calculator tool so totals/sums are computed exactly instead of
+/// guessed by the model. Tolerating "$42,000" matters: it lets the model pass the
+/// numbers exactly as they appear in the documents, so it doesn't shy away from a
+/// currency-formatted column toward a plainer (wrong) one.
 ///
 /// Implemented as a small recursive-descent parser (not `NSExpression`, which can
 /// raise uncatchable Obj-C exceptions on malformed input). Returns nil for
@@ -75,13 +78,18 @@ public enum ArithmeticEvaluator {
             return parseNumber()
         }
 
+        /// Currency symbols allowed to prefix (or trail) a number; ignored when present.
+        private static let currency: Set<Character> = ["$", "€", "£", "¥", "₹", "₩", "¢", "₪", "₺", "₫"]
+
         private mutating func parseNumber() -> Double? {
             _ = peek()  // skip leading spaces
+            while i < s.count, Self.currency.contains(s[i]) { i += 1 }   // "$42,000" → 42000
             var digits = ""
             while i < s.count, s[i].isNumber || s[i] == "." || s[i] == "," {
                 if s[i] != "," { digits.append(s[i]) }   // tolerate thousands separators
                 i += 1
             }
+            while i < s.count, Self.currency.contains(s[i]) { i += 1 }   // trailing "100€"
             return digits.isEmpty ? nil : Double(digits)
         }
     }
