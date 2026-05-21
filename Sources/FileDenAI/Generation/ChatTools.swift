@@ -33,7 +33,7 @@ struct CalculatorTool: Tool {
 
     @Generable
     struct Arguments {
-        @Guide(description: "An arithmetic expression using digits and + - * / ( ) only, e.g. '42000 + 68000 + 97000 + 124000'.")
+        @Guide(description: "An arithmetic expression over the relevant numbers, joined by + - * / ( ). Pass the numbers exactly as they appear in the documents — currency symbols and thousands commas are fine and will be ignored. E.g. '$42,000 + $68,000 + $97,000 + $124,000'.")
         var expression: String
     }
 

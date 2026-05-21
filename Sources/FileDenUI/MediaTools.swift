@@ -120,6 +120,83 @@ enum ImageConvert {
     }
 }
 
+/// Shrink an image to fit a target file size, entirely on-device. Built for the
+/// "this upload form caps photos at 5 MB" case (passport, ID, visa) where you
+/// don't want to hand a sensitive original to some random web compressor.
+///
+/// Strategy: lower JPEG quality first (binary-searched, so it keeps as much
+/// detail as the budget allows) and only downscale when even low quality won't
+/// fit. Always writes JPEG — the format every upload form accepts — preserving
+/// the source orientation. File-in / file-out, like `ImageConvert`.
+enum ImageCompress {
+    static func compress(_ urls: [URL], maxBytes: Int) -> [URL] {
+        let dir = Staging.dir("IMG")
+        return urls.compactMap { compressOne($0, maxBytes: maxBytes, in: dir) }
+    }
+
+    private static func compressOne(_ url: URL, maxBytes: Int, in dir: URL) -> URL? {
+        guard maxBytes > 0,
+              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let orientation = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])?[kCGImagePropertyOrientation]
+
+        // Try quality at full resolution; if even the lowest won't fit, shrink the
+        // pixels ~20% and try again. A handful of steps clears any realistic cap.
+        var current = image
+        var encoded: Data?
+        for _ in 0..<8 {
+            if let data = bestUnder(maxBytes, image: current, orientation: orientation) {
+                encoded = data; break
+            }
+            guard let smaller = scaled(current, by: 0.8) else { break }
+            current = smaller
+        }
+        guard let encoded else { return nil }
+
+        let dest = Staging.uniqueURL(in: dir, name: url.deletingPathExtension().lastPathComponent + " compressed.jpg")
+        return (try? encoded.write(to: dest)) != nil ? dest : nil
+    }
+
+    /// Highest-quality JPEG of `image` that fits `maxBytes`, or nil if even the
+    /// lowest quality is too big (caller should downscale and retry).
+    private static func bestUnder(_ maxBytes: Int, image: CGImage, orientation: Any?) -> Data? {
+        // If near-lossless already fits, take it — don't degrade for no reason.
+        if let high = encodeJPEG(image, quality: 0.95, orientation: orientation), high.count <= maxBytes {
+            return high
+        }
+        var lo = 0.0, hi = 0.95
+        var best: Data?
+        for _ in 0..<8 {
+            let mid = (lo + hi) / 2
+            guard let data = encodeJPEG(image, quality: mid, orientation: orientation) else { break }
+            if data.count <= maxBytes { best = data; lo = mid } else { hi = mid }
+        }
+        return best
+    }
+
+    private static func encodeJPEG(_ image: CGImage, quality: Double, orientation: Any?) -> Data? {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return nil }
+        var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        if let orientation { options[kCGImagePropertyOrientation] = orientation }
+        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? (data as Data) : nil
+    }
+
+    private static func scaled(_ image: CGImage, by factor: Double) -> CGImage? {
+        let w = Int((Double(image.width) * factor).rounded())
+        let h = Int((Double(image.height) * factor).rounded())
+        guard w > 0, h > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
+}
+
 /// Native video conversion via AVFoundation.
 ///
 /// Each function takes one source and reports 0…1 progress as it works (the

@@ -28,13 +28,31 @@ public enum HybridRetriever {
             .prefix(candidatePool)
 
         let lists = lexicalIDs.isEmpty ? [semanticIDs] : [semanticIDs, Array(lexicalIDs)]
-        let fused = RankFusion.rrf(lists, limit: k)
+        // Fuse a deeper pool than `k` so we can drop duplicates and still fill `k`.
+        let fused = RankFusion.rrf(lists, limit: max(k * 4, candidatePool))
 
-        return fused.compactMap { entry in
-            guard let chunk = byID[entry.id] else { return nil }
+        // Operational reports repeat boilerplate verbatim; without this the "sources"
+        // are several copies of one paragraph, crowding out genuinely distinct hits
+        // (like the one table the answer needs). Keep the first of each text.
+        var seenText = Set<String>()
+        var out: [Citation] = []
+        for entry in fused {
+            guard let chunk = byID[entry.id] else { continue }
+            guard seenText.insert(Self.dedupKey(chunk.text)).inserted else { continue }
             // Prefer the cosine score for display when we have it.
             let score = semanticScore[entry.id] ?? Float(entry.score)
-            return Citation(id: entry.id, chunk: chunk, score: score)
+            out.append(Citation(id: entry.id, chunk: chunk, score: score))
+            if out.count >= k { break }
         }
+        return out
+    }
+
+    /// Identity for de-duplication: case- and whitespace-normalized full text, so
+    /// verbatim repeats collapse while genuinely different passages are kept.
+    private static func dedupKey(_ text: String) -> String {
+        text.lowercased()
+            .components(separatedBy: .whitespacesAndNewlines)
+            .filter { !$0.isEmpty }
+            .joined(separator: " ")
     }
 }
