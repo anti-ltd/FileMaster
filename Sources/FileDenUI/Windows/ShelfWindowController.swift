@@ -2,6 +2,13 @@ import AppKit
 import SwiftUI
 import FileDenCore
 
+/// A den panel that can become key — needed so the inline Ask text field accepts
+/// typing — while staying non-activating (it never brings the app forward).
+final class DenPanel: NSPanel {
+    override var canBecomeKey: Bool { true }
+    override var canBecomeMain: Bool { false }
+}
+
 /// Hosts a single den. Owns the borderless `NSPanel` and bridges the SwiftUI
 /// `ShelfView` to AppKit lifecycle events (resize, empty, close).
 public class ShelfWindowController: NSWindowController {
@@ -11,7 +18,7 @@ public class ShelfWindowController: NSWindowController {
     private var currentURLs: [URL] = []
 
     convenience init(initialURLs: [URL]) {
-        let panel = NSPanel(
+        let panel = DenPanel(
             contentRect: NSRect(x: 0, y: 0, width: 200, height: 200),
             styleMask: [.borderless, .nonactivatingPanel, .fullSizeContentView],
             backing: .buffered,
@@ -36,6 +43,10 @@ public class ShelfWindowController: NSWindowController {
             onItemsReceived: { [weak self] in self?.receivedDrop = true },
             onItemsChanged: { [weak self] empty in self?.isEmpty = empty },
             onURLsChanged: { [weak self] urls in self?.currentURLs = urls },
+            onAskModeChanged: { [weak self] asking in
+                // Make the den key so the inline Ask field can accept typing.
+                if asking { self?.window?.makeKeyAndOrderFront(nil) }
+            },
             initialURLs: initialURLs
         )
         let hosting = NSHostingView(rootView: shelfView)

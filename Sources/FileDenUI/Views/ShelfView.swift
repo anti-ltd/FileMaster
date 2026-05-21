@@ -24,6 +24,9 @@ struct ShelfView: View {
     var onItemsReceived: (() -> Void)? = nil
     var onItemsChanged: ((Bool) -> Void)? = nil
     var onURLsChanged: (([URL]) -> Void)? = nil
+    /// Called when the den enters (true) / leaves (false) inline Ask mode, so the
+    /// window controller can make the panel key for text input.
+    var onAskModeChanged: ((Bool) -> Void)? = nil
     var initialURLs: [URL] = []
 
     @Environment(\.colorScheme) private var colorScheme
@@ -39,11 +42,27 @@ struct ShelfView: View {
     @State private var selection: Set<UUID> = []
     @State private var selectionAnchor: UUID? = nil
     @State private var viewMode: ExpandedViewMode = .grid
+    @State private var isAsking = false
+    @State private var askSession: QASession? = nil
+    @State private var askURLs: [URL] = []
+    @State private var viewingCitation: Citation? = nil
 
     enum ExpandedViewMode { case grid, list }
 
     private let compactSize = CGSize(width: 200, height: 200)
     private let expandedSize = CGSize(width: 340, height: 420)
+    /// Size when Ask is open beside the file view: files (left) + Ask (right).
+    private let askSize = CGSize(width: 740, height: 560)
+    /// Size when a citation source is also open: files + Ask + source.
+    private let askViewSize = CGSize(width: 1180, height: 640)
+    /// Width Ask shrinks to when the source pane is showing.
+    private let askPaneViewingWidth: CGFloat = 400
+
+    /// The window size for the den's current mode.
+    private var currentSize: CGSize {
+        if isAsking { return viewingCitation != nil ? askViewSize : askSize }
+        return isExpanded ? expandedSize : compactSize
+    }
 
     var body: some View {
         ZStack {
@@ -54,7 +73,10 @@ struct ShelfView: View {
                     ? Color.white.opacity(0.03)
                     : Color.white.opacity(0.15))
 
-            if isExpanded {
+            if isAsking {
+                askSplitView
+                    .transition(.opacity)
+            } else if isExpanded {
                 expandedView
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
             } else {
@@ -62,10 +84,7 @@ struct ShelfView: View {
                     .transition(.opacity.combined(with: .scale(scale: 0.97)))
             }
         }
-        .frame(
-            width: isExpanded ? expandedSize.width : compactSize.width,
-            height: isExpanded ? expandedSize.height : compactSize.height
-        )
+        .frame(width: currentSize.width, height: currentSize.height)
         .onHover { hovered in
             withAnimation(.easeInOut(duration: 0.2)) { isHovered = hovered }
             if !hovered { isDragging = false }
@@ -83,15 +102,22 @@ struct ShelfView: View {
         .onChange(of: items.map(\.url)) { _, urls in onURLsChanged?(urls) }
         .clipShape(RoundedRectangle(cornerRadius: 24))
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isExpanded)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isAsking)
         .onChange(of: isExpanded) { _, expanded in
-            let size = expanded ? expandedSize : compactSize
-            NotificationCenter.default.post(name: .shelfResizeRequested, object: size)
-            onResize?(size)
+            postResize()
             if expanded {
                 itemsDealt = false
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { itemsDealt = true }
+            } else {
+                isAsking = false
             }
         }
+        .onChange(of: isAsking) { _, asking in
+            if !asking { viewingCitation = nil }
+            postResize()
+            onAskModeChanged?(asking)
+        }
+        .onChange(of: viewingCitation) { _, _ in postResize() }
         .onAppear {
             if items.isEmpty && !initialURLs.isEmpty {
                 items = initialURLs.map { ShelfItem(url: $0) }
@@ -139,6 +165,9 @@ struct ShelfView: View {
                 VStack {
                     Spacer()
                     HStack {
+                        if settings.aiEnabled && !askableURLs.isEmpty {
+                            compactAskButton.padding(.leading, 10).padding(.bottom, 8)
+                        }
                         Spacer()
                         shareButton.padding(.trailing, 10).padding(.bottom, 8)
                     }
@@ -299,14 +328,6 @@ struct ShelfView: View {
                 .buttonStyle(.plain)
                 Spacer()
                 if settings.aiEnabled && !askableURLs.isEmpty {
-                    Button(action: askAI) {
-                        Label("Ask", systemImage: "sparkles")
-                            .font(.system(size: 12, weight: .medium))
-                            .foregroundStyle(.tint)
-                    }
-                    .buttonStyle(.plain)
-                    .help("Ask questions about these documents, offline")
-                    .padding(.trailing, 6)
                     Button(action: saveAsNotebook) {
                         Image(systemName: "book.closed")
                             .font(.system(size: 12, weight: .medium))
@@ -320,7 +341,8 @@ struct ShelfView: View {
                     title: actionsButtonLabel,
                     urls: { selectedItems.map(\.url) },
                     onShare: { view in shareAll(from: view) },
-                    onRemove: { removed in removeURLs(removed) }
+                    onRemove: { removed in removeURLs(removed) },
+                    onAsk: { urls in enterAsk(urls: urls) }
                 )
                 .frame(height: 20)
                 .fixedSize()
@@ -328,6 +350,65 @@ struct ShelfView: View {
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
         }
+    }
+
+    // MARK: - Ask split (files left, Ask right)
+
+    private var askSplitView: some View {
+        HStack(spacing: 0) {
+            expandedView
+                .frame(width: expandedSize.width)
+            Divider().opacity(0.4)
+            if let citation = viewingCitation {
+                askPane
+                    .frame(width: askPaneViewingWidth)
+                Divider().opacity(0.4)
+                CitationPane(citation: citation,
+                             onClose: { withAnimation { viewingCitation = nil } })
+                    .frame(maxWidth: .infinity)
+            } else {
+                askPane
+                    .frame(maxWidth: .infinity)
+            }
+        }
+        .frame(width: currentSize.width, height: currentSize.height)
+    }
+
+    private var askPane: some View {
+        VStack(spacing: 0) {
+            HStack(alignment: .center) {
+                Text("Ask")
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer()
+                Button(action: { withAnimation { isAsking = false } }) {
+                    Image(systemName: "xmark")
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(width: 26, height: 26)
+                        .background(.regularMaterial, in: Circle())
+                }
+                .buttonStyle(.plain)
+                .help("Close Ask")
+            }
+            .padding(.horizontal, 14)
+            .padding(.top, 14)
+            .padding(.bottom, 6)
+            .background(WindowDragHandle())
+
+            if let askSession {
+                QAView(session: askSession,
+                       onOpenCitation: { citation in withAnimation { viewingCitation = citation } })
+            } else {
+                Spacer()
+            }
+        }
+    }
+
+    /// Tell the host window to resize to the den's current mode.
+    private func postResize() {
+        let size = currentSize
+        NotificationCenter.default.post(name: .shelfResizeRequested, object: size)
+        onResize?(size)
     }
 
     @ViewBuilder
@@ -414,11 +495,25 @@ struct ShelfView: View {
             ActionsMenuButton(
                 urls: { selectedItems.map(\.url) },
                 onShare: { view in shareAll(from: view) },
-                onRemove: { removed in removeURLs(removed) }
+                onRemove: { removed in removeURLs(removed) },
+                onAsk: { urls in enterAsk(urls: urls) }
             )
             .frame(width: 20, height: 20)
         }
         .frame(width: 28, height: 28)
+    }
+
+    /// Compact-mode Ask button. Expands the den and opens Ask beside the files.
+    private var compactAskButton: some View {
+        Button(action: askAI) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.tint)
+                .frame(width: 28, height: 28)
+                .background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Ask questions about these files, offline")
     }
 
     private func removeURLs(_ urls: [URL]) {
@@ -567,12 +662,24 @@ struct ShelfView: View {
         selectedItems.map(\.url).filter { TextExtractor.canExtract($0) }
     }
 
-    /// Open the Ask window for the den's searchable documents. Routed through a
-    /// notification so it doesn't need a reference to `DenManager`.
-    private func askAI() {
-        let urls = askableURLs
-        guard !urls.isEmpty else { return }
-        NotificationCenter.default.post(name: .askAIRequested, object: urls)
+    private func askAI() { enterAsk(urls: askableURLs) }
+
+    /// Open Ask beside the file view. Expands the den (from compact if needed)
+    /// and splits the window: files on the left, Ask on the right. Builds a fresh
+    /// session when the document set changes; otherwise reuses the open one so the
+    /// previous answer is preserved. Shared by the compact Ask button and the
+    /// "Ask AI…" actions-menu item.
+    private func enterAsk(urls: [URL]) {
+        let searchable = urls.filter { TextExtractor.canExtract($0) }
+        guard !searchable.isEmpty else { return }
+        if askSession == nil || askURLs != searchable {
+            askSession = QASession(urls: searchable)
+            askURLs = searchable
+        }
+        withAnimation {
+            isExpanded = true
+            isAsking = true
+        }
     }
 
     /// Save the den's searchable documents as a named, persistent notebook.

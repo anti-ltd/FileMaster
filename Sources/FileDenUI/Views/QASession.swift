@@ -19,6 +19,7 @@ final class QASession: ObservableObject {
     @Published private(set) var phase: Phase = .indexing
     @Published private(set) var citations: [Citation] = []
     @Published private(set) var answerText: String?       // synthesized prose, when produced
+    @Published private(set) var answerError: String?      // why synthesis failed, if it did
     @Published private(set) var answerCitedIDs: Set<Int64> = []
     @Published private(set) var isSearching = false        // retrieving passages
     @Published private(set) var isAnswering = false        // LLM writing the answer
@@ -94,6 +95,7 @@ final class QASession: ObservableObject {
         hasAsked = true
         isSearching = true
         answerText = nil
+        answerError = nil
         answerCitedIDs = []
         citations = []
 
@@ -114,6 +116,7 @@ final class QASession: ObservableObject {
     private func synthesize(question: String, citations: [Citation]) {
         guard #available(macOS 26, *) else { return }
         isAnswering = true
+        answerError = nil
         answerTask = Task { [weak self] in
             do {
                 for try await event in FoundationModelsAnswerProvider.streamAnswer(question: question, citations: citations) {
@@ -122,14 +125,21 @@ final class QASession: ObservableObject {
                     case .partialText(let text):
                         self?.answerText = text
                     case .completed(let answer):
-                        self?.answerText = answer.text
-                        self?.answerCitedIDs = Set(answer.citedIDs)
+                        let trimmed = answer.text.trimmingCharacters(in: .whitespacesAndNewlines)
+                        if trimmed.isEmpty {
+                            self?.answerText = nil
+                            self?.answerError = "The model didn't return an answer — showing the source passages below."
+                        } else {
+                            self?.answerText = answer.text
+                            self?.answerCitedIDs = Set(answer.citedIDs)
+                        }
                     }
                 }
             } catch is CancellationError {
                 return
             } catch {
                 self?.answerText = nil
+                self?.answerError = "Couldn't generate a written answer — showing the source passages below."
             }
             self?.isAnswering = false
         }

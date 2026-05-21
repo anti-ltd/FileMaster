@@ -9,6 +9,8 @@ struct ActionsMenuButton: NSViewRepresentable {
     let urls: () -> [URL]
     let onShare: (NSView) -> Void
     let onRemove: ([URL]) -> Void
+    /// Called when "Ask AI…" is chosen, so the owning den can open Ask inline.
+    var onAsk: (([URL]) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSButton {
         let b = NSButton()
@@ -38,23 +40,27 @@ struct ActionsMenuButton: NSViewRepresentable {
         context.coordinator.urls = urls
         context.coordinator.onShare = onShare
         context.coordinator.onRemove = onRemove
+        context.coordinator.onAsk = onAsk
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(urls: urls, onShare: onShare, onRemove: onRemove)
+        Coordinator(urls: urls, onShare: onShare, onRemove: onRemove, onAsk: onAsk)
     }
 
     final class Coordinator: NSObject {
         var urls: () -> [URL]
         var onShare: (NSView) -> Void
         var onRemove: ([URL]) -> Void
+        var onAsk: (([URL]) -> Void)?
 
         init(urls: @escaping () -> [URL],
              onShare: @escaping (NSView) -> Void,
-             onRemove: @escaping ([URL]) -> Void) {
+             onRemove: @escaping ([URL]) -> Void,
+             onAsk: (([URL]) -> Void)? = nil) {
             self.urls = urls
             self.onShare = onShare
             self.onRemove = onRemove
+            self.onAsk = onAsk
         }
 
         @objc func tapped(_ sender: NSButton) {
@@ -64,7 +70,8 @@ struct ActionsMenuButton: NSViewRepresentable {
                 for: list,
                 host: sender,
                 onShare: onShare,
-                onRemove: onRemove
+                onRemove: onRemove,
+                onAsk: onAsk
             )
             menu.popUp(positioning: nil,
                        at: NSPoint(x: 0, y: sender.bounds.height + 4),
@@ -79,11 +86,13 @@ enum FileActions {
         host: NSView,
         onShare: @escaping (NSView) -> Void,
         onRemove: @escaping ([URL]) -> Void,
-        onRemoveFromDen: (([URL]) -> Void)? = nil
+        onRemoveFromDen: (([URL]) -> Void)? = nil,
+        onAsk: (([URL]) -> Void)? = nil
     ) -> NSMenu {
         let menu = NSMenu()
         let bridge = ActionBridge(urls: urls, host: host, onShare: onShare,
-                                  onRemove: onRemove, onRemoveFromDen: onRemoveFromDen)
+                                  onRemove: onRemove, onRemoveFromDen: onRemoveFromDen,
+                                  onAsk: onAsk)
         objc_setAssociatedObject(menu, &ActionBridge.assocKey, bridge, .OBJC_ASSOCIATION_RETAIN)
 
         let hasDir = urls.contains { isDirectory($0) }
@@ -280,21 +289,31 @@ final class ActionBridge: NSObject {
     let onShare: (NSView) -> Void
     let onRemove: ([URL]) -> Void
     let onRemoveFromDen: (([URL]) -> Void)?
+    let onAsk: (([URL]) -> Void)?
 
     init(urls: [URL], host: NSView,
          onShare: @escaping (NSView) -> Void,
          onRemove: @escaping ([URL]) -> Void,
-         onRemoveFromDen: (([URL]) -> Void)? = nil) {
+         onRemoveFromDen: (([URL]) -> Void)? = nil,
+         onAsk: (([URL]) -> Void)? = nil) {
         self.urls = urls
         self.host = host
         self.onShare = onShare
         self.onRemove = onRemove
         self.onRemoveFromDen = onRemoveFromDen
+        self.onAsk = onAsk
     }
 
     @objc func askAI() {
         let searchable = urls.filter { TextExtractor.canExtract($0) }
-        NotificationCenter.default.post(name: .askAIRequested, object: searchable.isEmpty ? urls : searchable)
+        let target = searchable.isEmpty ? urls : searchable
+        // Prefer opening Ask inline within the owning den; fall back to a
+        // standalone window when there's no den context (e.g. menu-bar paths).
+        if let onAsk {
+            onAsk(target)
+        } else {
+            NotificationCenter.default.post(name: .askAIRequested, object: target)
+        }
     }
 
     @objc func openItems() { urls.forEach { NSWorkspace.shared.open($0) } }

@@ -9,6 +9,9 @@ struct QAView: View {
     @ObservedObject var session: QASession
     @ObservedObject private var settings = FileDenSettings.shared
     @State private var question = ""
+    @FocusState private var inputFocused: Bool
+    /// Called when a source is clicked, so the host can show it in a pane.
+    var onOpenCitation: ((Citation) -> Void)? = nil
 
     var body: some View {
         VStack(spacing: 0) {
@@ -19,7 +22,10 @@ struct QAView: View {
             inputBar
         }
         .frame(minWidth: 360, minHeight: 420)
-        .background(.background)
+        .onAppear { if session.phase == .ready { inputFocused = true } }
+        .onChange(of: session.phase) { _, phase in
+            if phase == .ready { inputFocused = true }
+        }
     }
 
     // MARK: - Banner
@@ -69,9 +75,7 @@ struct QAView: View {
     // MARK: - Content
 
     @ViewBuilder private var content: some View {
-        if session.isSearching {
-            centered { ProgressView("Searching…").controlSize(.small) }
-        } else if !session.hasAsked {
+        if !session.hasAsked {
             centered {
                 VStack(spacing: 6) {
                     Image(systemName: "text.magnifyingglass")
@@ -83,23 +87,50 @@ struct QAView: View {
                 }
                 .multilineTextAlignment(.center)
             }
-        } else if session.citations.isEmpty {
-            centered {
-                Text("No relevant passages found for “\(session.lastQuestion)”.")
-                    .font(.system(size: 12)).foregroundStyle(.secondary)
-                    .multilineTextAlignment(.center)
-            }
         } else {
             ScrollView {
                 VStack(alignment: .leading, spacing: 12) {
-                    if session.isAnswering || session.answerText != nil {
-                        answerSection
+                    questionHeader
+                    if session.isSearching {
+                        HStack(spacing: 8) {
+                            ProgressView().controlSize(.small)
+                            Text("Searching…").font(.system(size: 12)).foregroundStyle(.secondary)
+                        }
+                        .padding(.horizontal, 12)
+                    } else if session.citations.isEmpty {
+                        Text("No relevant passages found.")
+                            .font(.system(size: 12)).foregroundStyle(.secondary)
+                            .padding(.horizontal, 12)
+                    } else {
+                        if session.isAnswering || session.answerText != nil || session.answerError != nil {
+                            answerSection
+                        }
+                        sourcesSection
                     }
-                    sourcesSection
                 }
                 .padding(.vertical, 10)
             }
         }
+    }
+
+    /// The question that was asked, shown above the answer on its own card.
+    private var questionHeader: some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Image(systemName: "questionmark.circle.fill")
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.tint)
+            Text(session.lastQuestion)
+                .font(.system(size: 14, weight: .semibold))
+                .foregroundStyle(.primary)
+                .textSelection(.enabled)
+                .fixedSize(horizontal: false, vertical: true)
+                .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .padding(12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+        .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
+        .padding(.horizontal, 12)
     }
 
     @ViewBuilder private var answerSection: some View {
@@ -108,17 +139,37 @@ struct QAView: View {
             if let text = session.answerText {
                 Text(text)
                     .font(.system(size: 13))
+                    .foregroundStyle(.primary)
                     .textSelection(.enabled)
                     .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
                     .padding(12)
-                    .background(Color.accentColor.opacity(0.08), in: RoundedRectangle(cornerRadius: 10))
+                    .background(
+                        RoundedRectangle(cornerRadius: 10)
+                            .fill(.regularMaterial)
+                            .overlay(RoundedRectangle(cornerRadius: 10).fill(Color.accentColor.opacity(0.12)))
+                    )
+                    .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.accentColor.opacity(0.35), lineWidth: 1))
+            } else if let error = session.answerError {
+                HStack(alignment: .top, spacing: 8) {
+                    Image(systemName: "exclamationmark.triangle.fill")
+                        .font(.system(size: 12)).foregroundStyle(.orange)
+                    Text(error)
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.1), lineWidth: 0.5))
             } else {
                 HStack(spacing: 8) {
                     ProgressView().controlSize(.small)
                     Text("Writing answer…").font(.system(size: 12)).foregroundStyle(.secondary)
                 }
                 .padding(12)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
             }
         }
         .padding(.horizontal, 12)
@@ -128,7 +179,9 @@ struct QAView: View {
         VStack(alignment: .leading, spacing: 8) {
             sectionLabel(session.answerText != nil ? "Sources" : "Top passages")
             ForEach(orderedCitations) { citation in
-                CitationRow(citation: citation, isCited: session.answerCitedIDs.contains(citation.id))
+                CitationRow(citation: citation,
+                            isCited: session.answerCitedIDs.contains(citation.id),
+                            onOpen: { onOpenCitation?(citation) })
                     .padding(.horizontal, 10)
             }
         }
@@ -162,8 +215,10 @@ struct QAView: View {
             TextField("Ask a question…", text: $question, axis: .vertical)
                 .textFieldStyle(.plain)
                 .lineLimit(1...4)
+                .focused($inputFocused)
                 .padding(.horizontal, 10).padding(.vertical, 8)
-                .background(Color.primary.opacity(0.06), in: RoundedRectangle(cornerRadius: 10))
+                .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+                .overlay(RoundedRectangle(cornerRadius: 10).strokeBorder(Color.primary.opacity(0.12), lineWidth: 0.5))
                 .onSubmit(submit)
                 .disabled(session.phase != .ready)
 
@@ -196,9 +251,10 @@ struct QAView: View {
 private struct CitationRow: View {
     let citation: Citation
     var isCited: Bool = false
+    let onOpen: () -> Void
 
     var body: some View {
-        Button(action: { CitationOpener.open(citation) }) {
+        Button(action: onOpen) {
             VStack(alignment: .leading, spacing: 5) {
                 HStack(spacing: 6) {
                     Image(systemName: icon).font(.system(size: 12)).foregroundStyle(.secondary)
@@ -208,8 +264,8 @@ private struct CitationRow: View {
                         Text("cited")
                             .font(.system(size: 9, weight: .bold))
                             .padding(.horizontal, 5).padding(.vertical, 1)
-                            .background(Color.accentColor.opacity(0.18), in: Capsule())
-                            .foregroundStyle(.tint)
+                            .background(Color.accentColor, in: Capsule())
+                            .foregroundStyle(.white)
                     }
                     Spacer(minLength: 6)
                     Text(citation.locationLabel)
@@ -219,14 +275,19 @@ private struct CitationRow: View {
                 }
                 Text(citation.snippet)
                     .font(.system(size: 12))
-                    .foregroundStyle(.primary.opacity(0.85))
+                    .foregroundStyle(.secondary)
                     .lineLimit(3)
                     .multilineTextAlignment(.leading)
                     .fixedSize(horizontal: false, vertical: true)
             }
             .padding(10)
             .frame(maxWidth: .infinity, alignment: .leading)
-            .background(Color.primary.opacity(isCited ? 0.08 : 0.05), in: RoundedRectangle(cornerRadius: 10))
+            .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 10))
+            .overlay(
+                RoundedRectangle(cornerRadius: 10)
+                    .strokeBorder(isCited ? Color.accentColor.opacity(0.55) : Color.primary.opacity(0.1),
+                                  lineWidth: isCited ? 1 : 0.5)
+            )
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
