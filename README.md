@@ -15,8 +15,10 @@
 **A floating shelf for the files you're working with right now.**
 
 ![Platform](https://img.shields.io/badge/macOS%2014%2B-black?style=flat-square)
-![Language](https://img.shields.io/badge/Swift-orange?style=flat-square&logo=swift)
+![Language](https://img.shields.io/badge/Swift%205.10-orange?style=flat-square&logo=swift)
 [![License](https://img.shields.io/badge/license-CLL%20v1.2-blue?style=flat-square)](LICENSE.md)
+![Bundle](https://img.shields.io/badge/bundle-1.9%20MB-brightgreen?style=flat-square)
+![CPU](https://img.shields.io/badge/idle%20CPU-%3C0.1%25-brightgreen?style=flat-square)
 
 `drag · drop · stash · ask · share`
 
@@ -31,7 +33,7 @@
 ## Screenshots
 
 <div align="center">
-<img src="Resources/screenshots/shelf-framed.png" width="320" alt="A den of stashed files"> <img src="Resources/screenshots/ask-framed.png" width="320" alt="Ask — chat with your documents">
+<img src="Resources/screenshots/shelf-framed.png" width="380" alt="A den of stashed files"> <img src="Resources/screenshots/ask-framed.png" width="380" alt="Ask — chat with your documents">
 </div>
 
 ---
@@ -150,7 +152,7 @@ make clean      # clear SwiftPM + build/
 make reset      # wipe ~/Library/Application Support/counter-ltd/fileden
 ```
 
-The release bundle ships at ~1.7 MB on Apple Silicon. There are no third-party dependencies — everything is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for the Ask feature).
+There are no third-party dependencies — everything is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for the Ask feature).
 
 Codesigning uses a local `FileDen Dev` code-signing certificate if one exists in your keychain, otherwise it falls back to ad-hoc.
 
