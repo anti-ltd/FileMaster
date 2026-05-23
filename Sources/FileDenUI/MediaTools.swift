@@ -120,65 +120,109 @@ enum ImageConvert {
     }
 }
 
-/// Shrink an image to fit a target file size, entirely on-device. Built for the
-/// "this upload form caps photos at 5 MB" case (passport, ID, visa) where you
-/// don't want to hand a sensitive original to some random web compressor.
+/// Shrink an image, entirely on-device. Built for the "this upload form caps
+/// photos at 5 MB" case (passport, ID, visa) and for general "make it smaller"
+/// — without handing a sensitive original to some random web compressor.
 ///
-/// Strategy: lower JPEG quality first (binary-searched, so it keeps as much
-/// detail as the budget allows) and only downscale when even low quality won't
-/// fit. Always writes JPEG — the format every upload form accepts — preserving
-/// the source orientation. File-in / file-out, like `ImageConvert`.
+/// Driven by ``Options``, which the compression panel binds its sliders to:
+/// pick a target format, scale the pixels, and either dial the quality directly
+/// or pin a maximum file size (quality is then binary-searched to fit, keeping
+/// as much detail as the budget allows). Source orientation rides along.
+/// File-in / file-out, like `ImageConvert`.
 enum ImageCompress {
-    static func compress(_ urls: [URL], maxBytes: Int) -> [URL] {
-        let dir = Staging.dir("IMG")
-        return urls.compactMap { compressOne($0, maxBytes: maxBytes, in: dir) }
+
+    /// Everything the panel can tweak. `targetBytes == nil` → quality-driven;
+    /// otherwise quality is searched to land just under the cap.
+    struct Options: Equatable {
+        var format: ImageConvert.Format = .jpeg
+        /// Fraction of each original dimension, 0…1 (1 = original size).
+        var scale: Double = 1.0
+        /// Lossy quality 0…1 (ignored for lossless formats and when capping).
+        var quality: Double = 0.8
+        /// Hard ceiling on the output size in bytes, or nil for quality-driven.
+        var targetBytes: Int? = nil
     }
 
-    private static func compressOne(_ url: URL, maxBytes: Int, in dir: URL) -> URL? {
-        guard maxBytes > 0,
-              let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+    /// A single image's source pixel size and byte size, for the panel header.
+    static func sourceInfo(_ url: URL) -> (pixels: CGSize, bytes: Int)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              let props = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any]
+        else { return nil }
+        let w = (props[kCGImagePropertyPixelWidth] as? Double) ?? 0
+        let h = (props[kCGImagePropertyPixelHeight] as? Double) ?? 0
+        let bytes = (try? url.resourceValues(forKeys: [.fileSizeKey]).fileSize) ?? 0
+        return (CGSize(width: w, height: h), bytes)
+    }
+
+    /// Encode `urls` with `options`, staged into a fresh den. File-in / file-out.
+    static func process(_ urls: [URL], options: Options) -> [URL] {
+        let dir = Staging.dir("IMG")
+        var out: [URL] = []
+        for url in urls {
+            guard let (data, _) = render(url, options: options) else { continue }
+            let dest = Staging.uniqueURL(
+                in: dir,
+                name: url.deletingPathExtension().lastPathComponent + " compressed." + options.format.ext)
+            if (try? data.write(to: dest)) != nil { out.append(dest) }
+        }
+        return out
+    }
+
+    /// Quick estimate for the panel's live readout: resulting bytes and output
+    /// pixel size for one image, without writing anything to disk.
+    static func estimate(_ url: URL, options: Options) -> (bytes: Int, pixels: CGSize)? {
+        guard let (data, pixels) = render(url, options: options) else { return nil }
+        return (data.count, pixels)
+    }
+
+    // MARK: - Core
+
+    /// Load → scale → encode one image to in-memory data. Shared by `process`
+    /// (writes the data) and `estimate` (measures it).
+    private static func render(_ url: URL, options: Options) -> (data: Data, pixels: CGSize)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               CGImageSourceGetCount(source) > 0,
-              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+              let original = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
         let orientation = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])?[kCGImagePropertyOrientation]
 
-        // Try quality at full resolution; if even the lowest won't fit, shrink the
-        // pixels ~20% and try again. A handful of steps clears any realistic cap.
-        var current = image
-        var encoded: Data?
-        for _ in 0..<8 {
-            if let data = bestUnder(maxBytes, image: current, orientation: orientation) {
-                encoded = data; break
-            }
-            guard let smaller = scaled(current, by: 0.8) else { break }
-            current = smaller
-        }
-        guard let encoded else { return nil }
+        let factor = min(max(options.scale, 0.01), 1.0)
+        let image = factor < 0.999 ? (scaled(original, by: factor) ?? original) : original
+        let pixels = CGSize(width: image.width, height: image.height)
 
-        let dest = Staging.uniqueURL(in: dir, name: url.deletingPathExtension().lastPathComponent + " compressed.jpg")
-        return (try? encoded.write(to: dest)) != nil ? dest : nil
+        let data: Data?
+        if let cap = options.targetBytes, options.format.isLossy {
+            data = bestUnder(cap, image: image, format: options.format, orientation: orientation)
+                ?? encode(image, format: options.format, quality: 0.0, orientation: orientation)
+        } else {
+            data = encode(image, format: options.format, quality: options.quality, orientation: orientation)
+        }
+        guard let data else { return nil }
+        return (data, pixels)
     }
 
-    /// Highest-quality JPEG of `image` that fits `maxBytes`, or nil if even the
-    /// lowest quality is too big (caller should downscale and retry).
-    private static func bestUnder(_ maxBytes: Int, image: CGImage, orientation: Any?) -> Data? {
-        // If near-lossless already fits, take it — don't degrade for no reason.
-        if let high = encodeJPEG(image, quality: 0.95, orientation: orientation), high.count <= maxBytes {
-            return high
-        }
+    /// Highest-quality encoding of `image` that fits `maxBytes`, binary-searched.
+    /// nil only if encoding itself fails; an over-budget low-quality result is
+    /// still returned by the caller as a best effort.
+    private static func bestUnder(_ maxBytes: Int, image: CGImage,
+                                  format: ImageConvert.Format, orientation: Any?) -> Data? {
+        if let high = encode(image, format: format, quality: 0.95, orientation: orientation),
+           high.count <= maxBytes { return high }
         var lo = 0.0, hi = 0.95
         var best: Data?
-        for _ in 0..<8 {
+        for _ in 0..<9 {
             let mid = (lo + hi) / 2
-            guard let data = encodeJPEG(image, quality: mid, orientation: orientation) else { break }
+            guard let data = encode(image, format: format, quality: mid, orientation: orientation) else { break }
             if data.count <= maxBytes { best = data; lo = mid } else { hi = mid }
         }
         return best
     }
 
-    private static func encodeJPEG(_ image: CGImage, quality: Double, orientation: Any?) -> Data? {
+    private static func encode(_ image: CGImage, format: ImageConvert.Format,
+                               quality: Double, orientation: Any?) -> Data? {
         let data = NSMutableData()
-        guard let dest = CGImageDestinationCreateWithData(data, "public.jpeg" as CFString, 1, nil) else { return nil }
-        var options: [CFString: Any] = [kCGImageDestinationLossyCompressionQuality: quality]
+        guard let dest = CGImageDestinationCreateWithData(data, format.typeID as CFString, 1, nil) else { return nil }
+        var options: [CFString: Any] = [:]
+        if format.isLossy { options[kCGImageDestinationLossyCompressionQuality] = quality }
         if let orientation { options[kCGImagePropertyOrientation] = orientation }
         CGImageDestinationAddImage(dest, image, options as CFDictionary)
         return CGImageDestinationFinalize(dest) ? (data as Data) : nil
@@ -187,6 +231,91 @@ enum ImageCompress {
     private static func scaled(_ image: CGImage, by factor: Double) -> CGImage? {
         let w = Int((Double(image.width) * factor).rounded())
         let h = Int((Double(image.height) * factor).rounded())
+        guard w > 0, h > 0,
+              let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpaceCreateDeviceRGB(),
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        ctx.interpolationQuality = .high
+        ctx.draw(image, in: CGRect(x: 0, y: 0, width: w, height: h))
+        return ctx.makeImage()
+    }
+}
+
+/// Resize images on-device, preserving aspect ratio and the original format.
+///
+/// The panel offers four ways to specify the target, mirroring the standalone
+/// "resize" utilities people reach for: pin the **width**, pin the **height**,
+/// scale by **percent**, or fit the **longest side** to a box (handy for a batch
+/// of mixed portrait/landscape shots). Output keeps the source's format when
+/// this OS can encode it, falling back to PNG. File-in / file-out, like the rest.
+enum ImageResize {
+
+    /// How the target dimensions are derived; the off-axis follows to keep aspect.
+    enum Mode: Hashable {
+        case width(Int)       // exact pixel width
+        case height(Int)      // exact pixel height
+        case percent(Double)  // uniform scale, 0…∞ (100 = original)
+        case longest(Int)     // longest side fits this many pixels
+    }
+
+    /// Target pixel size for `original` under `mode`, aspect preserved. Used both
+    /// to render and to drive the panel's live readout. Never returns < 1px.
+    static func target(for original: CGSize, mode: Mode) -> CGSize {
+        let ow = max(original.width, 1), oh = max(original.height, 1)
+        let factor: CGFloat
+        switch mode {
+        case .width(let w):   factor = CGFloat(max(w, 1)) / ow
+        case .height(let h):  factor = CGFloat(max(h, 1)) / oh
+        case .percent(let p): factor = CGFloat(max(p, 0.01)) / 100
+        case .longest(let m): factor = CGFloat(max(m, 1)) / max(ow, oh)
+        }
+        return CGSize(width: max((ow * factor).rounded(), 1),
+                      height: max((oh * factor).rounded(), 1))
+    }
+
+    static func process(_ urls: [URL], mode: Mode) -> [URL] {
+        let dir = Staging.dir("IMG")
+        var out: [URL] = []
+        for url in urls {
+            guard let (data, size, format) = render(url, mode: mode) else { continue }
+            let name = "\(url.deletingPathExtension().lastPathComponent) "
+                + "\(Int(size.width))×\(Int(size.height)).\(format.ext)"
+            let dest = Staging.uniqueURL(in: dir, name: name)
+            if (try? data.write(to: dest)) != nil { out.append(dest) }
+        }
+        return out
+    }
+
+    private static func render(_ url: URL, mode: Mode) -> (data: Data, size: CGSize, format: ImageConvert.Format)? {
+        guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
+              CGImageSourceGetCount(source) > 0,
+              let original = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let orientation = (CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any])?[kCGImagePropertyOrientation]
+
+        let size = target(for: CGSize(width: original.width, height: original.height), mode: mode)
+        guard let scaled = resample(original, to: size) else { return nil }
+        let format = outputFormat(for: url)
+
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, format.typeID as CFString, 1, nil) else { return nil }
+        var options: [CFString: Any] = [:]
+        if format.isLossy { options[kCGImageDestinationLossyCompressionQuality] = 0.92 }
+        if let orientation { options[kCGImagePropertyOrientation] = orientation }
+        CGImageDestinationAddImage(dest, scaled, options as CFDictionary)
+        return CGImageDestinationFinalize(dest) ? (data as Data, size, format) : nil
+    }
+
+    /// Keep the source format if ImageIO can write it; otherwise PNG (lossless,
+    /// universal) so odd inputs like BMP/GIF still produce a usable file.
+    private static func outputFormat(for url: URL) -> ImageConvert.Format {
+        for f in ImageConvert.Format.allCases where f.matches(url) && ImageConvert.canEncode(f) {
+            return f
+        }
+        return .png
+    }
+
+    private static func resample(_ image: CGImage, to size: CGSize) -> CGImage? {
+        let w = Int(size.width), h = Int(size.height)
         guard w > 0, h > 0,
               let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8, bytesPerRow: 0,
                                   space: CGColorSpaceCreateDeviceRGB(),

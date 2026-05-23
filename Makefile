@@ -51,14 +51,14 @@ icon: build
 	@if command -v pngquant >/dev/null 2>&1; then \
 		echo "Quantizing icon PNGs..."; \
 		for f in $(ICONSET)/*.png; do \
-			pngquant --quality=65-90 --speed 1 --force --output "$$f" "$$f"; \
+			pngquant --quality=90-100 --speed 1 --force --output "$$f" "$$f" || true; \
 		done; \
 	else \
 		echo "pngquant not found, skipping (brew install pngquant)"; \
 	fi
 	@if command -v optipng >/dev/null 2>&1; then \
 		echo "Optimizing icon PNGs..."; \
-		optipng -quiet -o2 $(ICONSET)/*.png; \
+		optipng -quiet -o7 $(ICONSET)/*.png; \
 	else \
 		echo "optipng not found, skipping (brew install optipng)"; \
 	fi

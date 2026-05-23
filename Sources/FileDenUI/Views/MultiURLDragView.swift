@@ -13,6 +13,9 @@ struct MultiURLDragView: NSViewRepresentable {
     /// view so the menu can use it as a host (e.g. positioning a share picker).
     /// Nil means no contextual menu.
     var menu: ((NSView) -> NSMenu?)? = nil
+    /// Fired when a drag session ends, with the dragged URLs and the operation
+    /// the drop performed (`[]` if cancelled). Lets the owner react to drag-out.
+    var onDragEnded: ([URL], NSDragOperation) -> Void = { _, _ in }
 
     func makeNSView(context: Context) -> DragCaptureView {
         let v = DragCaptureView()
@@ -20,6 +23,7 @@ struct MultiURLDragView: NSViewRepresentable {
         v.onTap = onTap
         v.onDoubleClick = onDoubleClick
         v.menuProvider = menu
+        v.onDragEnded = onDragEnded
         return v
     }
 
@@ -28,6 +32,7 @@ struct MultiURLDragView: NSViewRepresentable {
         nsView.onTap = onTap
         nsView.onDoubleClick = onDoubleClick
         nsView.menuProvider = menu
+        nsView.onDragEnded = onDragEnded
     }
 }
 
@@ -36,11 +41,15 @@ final class DragCaptureView: NSView, NSDraggingSource {
     var onTap: (NSEvent.ModifierFlags) -> Void = { _ in }
     var onDoubleClick: () -> Void = {}
     var menuProvider: ((NSView) -> NSMenu?)? = nil
+    var onDragEnded: ([URL], NSDragOperation) -> Void = { _, _ in }
 
     private var downPointInWindow: NSPoint?
     private var downEvent: NSEvent?
     private var didStartDrag = false
     private var downModifiers: NSEvent.ModifierFlags = []
+    /// Snapshot of what this session is carrying, so the end callback reports the
+    /// dragged set even if the selection changes meanwhile.
+    private var draggedURLs: [URL] = []
 
     override var isFlipped: Bool { false }
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
@@ -75,6 +84,7 @@ final class DragCaptureView: NSView, NSDraggingSource {
         guard !list.isEmpty else { return }
 
         didStartDrag = true
+        draggedURLs = list
         let items = list.map { url -> NSDraggingItem in
             let item = NSDraggingItem(pasteboardWriter: url as NSURL)
             let icon = NSWorkspace.shared.icon(forFile: url.path)
@@ -113,6 +123,13 @@ final class DragCaptureView: NSView, NSDraggingSource {
         sourceOperationMaskFor context: NSDraggingContext
     ) -> NSDragOperation {
         context == .outsideApplication ? [.copy, .move, .link, .generic] : []
+    }
+
+    func draggingSession(_ session: NSDraggingSession,
+                         endedAt screenPoint: NSPoint,
+                         operation: NSDragOperation) {
+        onDragEnded(draggedURLs, operation)
+        draggedURLs = []
     }
 }
 

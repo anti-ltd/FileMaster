@@ -47,6 +47,7 @@ var targets: [Target] = [
                 .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("PDFKit"),
                 .linkedFramework("AVFoundation"),
+                .linkedFramework("SceneKit"),
             ]
         ),
         .executableTarget(

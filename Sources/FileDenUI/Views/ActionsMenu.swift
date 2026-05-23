@@ -11,6 +11,8 @@ struct ActionsMenuButton: NSViewRepresentable {
     let onRemove: ([URL]) -> Void
     /// Called when "Ask AI…" is chosen, so the owning den can open Ask inline.
     var onAsk: (([URL]) -> Void)? = nil
+    /// Called when "Edit Image…" is chosen, so the owning den can open the editor inline.
+    var onEdit: (([URL]) -> Void)? = nil
 
     func makeNSView(context: Context) -> NSButton {
         let b = NSButton()
@@ -45,10 +47,11 @@ struct ActionsMenuButton: NSViewRepresentable {
         context.coordinator.onShare = onShare
         context.coordinator.onRemove = onRemove
         context.coordinator.onAsk = onAsk
+        context.coordinator.onEdit = onEdit
     }
 
     func makeCoordinator() -> Coordinator {
-        Coordinator(urls: urls, onShare: onShare, onRemove: onRemove, onAsk: onAsk)
+        Coordinator(urls: urls, onShare: onShare, onRemove: onRemove, onAsk: onAsk, onEdit: onEdit)
     }
 
     final class Coordinator: NSObject {
@@ -56,15 +59,18 @@ struct ActionsMenuButton: NSViewRepresentable {
         var onShare: (NSView) -> Void
         var onRemove: ([URL]) -> Void
         var onAsk: (([URL]) -> Void)?
+        var onEdit: (([URL]) -> Void)?
 
         init(urls: @escaping () -> [URL],
              onShare: @escaping (NSView) -> Void,
              onRemove: @escaping ([URL]) -> Void,
-             onAsk: (([URL]) -> Void)? = nil) {
+             onAsk: (([URL]) -> Void)? = nil,
+             onEdit: (([URL]) -> Void)? = nil) {
             self.urls = urls
             self.onShare = onShare
             self.onRemove = onRemove
             self.onAsk = onAsk
+            self.onEdit = onEdit
         }
 
         @objc func tapped(_ sender: NSButton) {
@@ -75,7 +81,8 @@ struct ActionsMenuButton: NSViewRepresentable {
                 host: sender,
                 onShare: onShare,
                 onRemove: onRemove,
-                onAsk: onAsk
+                onAsk: onAsk,
+                onEdit: onEdit
             )
             menu.popUp(positioning: nil,
                        at: NSPoint(x: 0, y: sender.bounds.height + 4),
@@ -91,12 +98,13 @@ enum FileActions {
         onShare: @escaping (NSView) -> Void,
         onRemove: @escaping ([URL]) -> Void,
         onRemoveFromDen: (([URL]) -> Void)? = nil,
-        onAsk: (([URL]) -> Void)? = nil
+        onAsk: (([URL]) -> Void)? = nil,
+        onEdit: (([URL]) -> Void)? = nil
     ) -> NSMenu {
         let menu = NSMenu()
         let bridge = ActionBridge(urls: urls, host: host, onShare: onShare,
                                   onRemove: onRemove, onRemoveFromDen: onRemoveFromDen,
-                                  onAsk: onAsk)
+                                  onAsk: onAsk, onEdit: onEdit)
         objc_setAssociatedObject(menu, &ActionBridge.assocKey, bridge, .OBJC_ASSOCIATION_RETAIN)
 
         let hasDir = urls.contains { isDirectory($0) }
@@ -146,15 +154,7 @@ enum FileActions {
                               #selector(ActionBridge.printItems), bridge))
         }
         if allImages {
-            menu.addItem(item("Set as Wallpaper", "photo.on.rectangle",
-                              #selector(ActionBridge.wallpaper), bridge))
-            menu.addItem(item(urls.count > 1 ? "Combine to PDF" : "Convert to PDF", "doc.badge.plus",
-                              #selector(ActionBridge.combinePDF), bridge))
-            menu.addItem(convertToDocumentMenu(bridge: bridge))
-            if let convert = convertImageMenu(bridge: bridge, urls: urls) {
-                menu.addItem(convert)
-            }
-            menu.addItem(compressImageMenu(bridge: bridge))
+            menu.addItem(imageToolsMenu(bridge: bridge, urls: urls))
         }
         if allPDFs {
             menu.addItem(pdfToolsMenu(bridge: bridge, count: urls.count))
@@ -213,6 +213,38 @@ enum FileActions {
         return parent
     }
 
+    /// "Image" submenu — gathers every image-only action under one roof so the
+    /// top-level menu stays short. Top items act directly; the conversion groups
+    /// stay as their own nested submenus.
+    private static func imageToolsMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem {
+        let sub = NSMenu()
+        if urls.count == 1, bridge.onEdit != nil {
+            sub.addItem(item("Edit Image…", "wand.and.stars",
+                             #selector(ActionBridge.editImage), bridge))
+            sub.addItem(.separator())
+        }
+        sub.addItem(item("Set as Wallpaper", "photo.on.rectangle",
+                         #selector(ActionBridge.wallpaper), bridge))
+        sub.addItem(item(urls.count > 1 ? "Combine to PDF" : "Convert to PDF", "doc.badge.plus",
+                         #selector(ActionBridge.combinePDF), bridge))
+        sub.addItem(item("Sketch to 3D Design…", "cube",
+                         #selector(ActionBridge.sketchTo3D), bridge))
+        sub.addItem(.separator())
+        sub.addItem(convertToDocumentMenu(bridge: bridge))
+        if let convert = convertImageMenu(bridge: bridge, urls: urls) {
+            sub.addItem(convert)
+        }
+        sub.addItem(item("Resize…", "arrow.up.left.and.arrow.down.right",
+                         #selector(ActionBridge.resizeImage), bridge))
+        sub.addItem(item("Compress Image…", "arrow.down.right.and.arrow.up.left",
+                         #selector(ActionBridge.compressImage), bridge))
+
+        let parent = NSMenuItem(title: "Image", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
     /// "Convert to Document" submenu — Searchable keeps the scan and adds an
     /// invisible text layer; Searchable (Cleaned) also deskews/whitens/sharpens;
     /// Precise preserves spatial layout and rotation; Formatted reflows
@@ -259,31 +291,6 @@ enum FileActions {
 
         let parent = NSMenuItem(title: "Convert Image", action: nil, keyEquivalent: "")
         parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
-        parent.submenu = sub
-        return parent
-    }
-
-    /// "Compress Image" submenu. Caps a photo at a chosen file size on-device —
-    /// for upload forms that reject anything bigger (e.g. Apple Developer's 5 MB
-    /// limit) without trusting the original to a web tool. Each item carries its
-    /// byte budget as `representedObject`. Results are staged into a new den.
-    private static func compressImageMenu(bridge: ActionBridge) -> NSMenuItem {
-        let presets: [(String, Int)] = [
-            ("Under 500 KB", 500_000),
-            ("Under 1 MB", 1_000_000),
-            ("Under 2 MB", 2_000_000),
-            ("Under 5 MB", 5_000_000),
-        ]
-        let sub = NSMenu()
-        for (label, bytes) in presets {
-            let i = NSMenuItem(title: label, action: #selector(ActionBridge.compress(_:)), keyEquivalent: "")
-            i.target = bridge
-            i.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
-            i.representedObject = bytes
-            sub.addItem(i)
-        }
-        let parent = NSMenuItem(title: "Compress Image", action: nil, keyEquivalent: "")
-        parent.image = NSImage(systemSymbolName: "arrow.down.right.and.arrow.up.left", accessibilityDescription: nil)
         parent.submenu = sub
         return parent
     }
@@ -343,18 +350,27 @@ final class ActionBridge: NSObject {
     let onRemove: ([URL]) -> Void
     let onRemoveFromDen: (([URL]) -> Void)?
     let onAsk: (([URL]) -> Void)?
+    let onEdit: (([URL]) -> Void)?
 
     init(urls: [URL], host: NSView,
          onShare: @escaping (NSView) -> Void,
          onRemove: @escaping ([URL]) -> Void,
          onRemoveFromDen: (([URL]) -> Void)? = nil,
-         onAsk: (([URL]) -> Void)? = nil) {
+         onAsk: (([URL]) -> Void)? = nil,
+         onEdit: (([URL]) -> Void)? = nil) {
         self.urls = urls
         self.host = host
         self.onShare = onShare
         self.onRemove = onRemove
         self.onRemoveFromDen = onRemoveFromDen
         self.onAsk = onAsk
+        self.onEdit = onEdit
+    }
+
+    @objc func editImage() {
+        let images = urls.filter { ImageConvert.isImage($0) }
+        guard let target = images.first else { return }
+        onEdit?([target])
     }
 
     @objc func askAI() {
@@ -485,6 +501,7 @@ final class ActionBridge: NSObject {
     @objc func digitize()          { runStaged("Converting (precise)") { url, progress in PDFTools.digitize([url], progress: progress) } }
     @objc func digitizeFormatted() { runStaged("Formatting document")  { url, progress in PDFTools.digitizeFormatted([url], progress: progress) } }
     @objc func combinePDF()      { runStaged("Creating PDF", batch: PDFTools.combineToPDF) }
+    @objc func sketchTo3D()     { runStaged("Rendering 3D design") { url, progress in SketchRenderer.render([url], progress: progress) } }
 
     // MARK: - Image conversion
 
@@ -496,10 +513,42 @@ final class ActionBridge: NSObject {
     @objc func convertToAVIF() { runStaged("Converting to AVIF") { url, _ in ImageConvert.convert([url], to: .avif) } }
     @objc func convertGIFToVideo() { runStaged("GIF → video") { url, progress in VideoConvert.gifToVideo(url, progress: progress) } }
 
-    @objc func compress(_ sender: NSMenuItem) {
-        guard let maxBytes = sender.representedObject as? Int else { return }
-        let cap = ByteCountFormatter.string(fromByteCount: Int64(maxBytes), countStyle: .file)
-        runStaged("Compressing under \(cap)") { url, _ in ImageCompress.compress([url], maxBytes: maxBytes) }
+    @objc func compressImage() {
+        guard let host else { return }
+        let inputs = urls
+        // The menu (and this bridge) are gone by the time the user commits, so the
+        // panel's callbacks stage statically rather than through `self`.
+        MainActor.assumeIsolated {
+            ActionPopover.shared.present(from: host) {
+                ImageCompressPanel(
+                    urls: inputs,
+                    onCompress: { opts in
+                        ActionPopover.shared.dismiss()
+                        ActionBridge.stage("Compressing", inputs: inputs) { url, _ in
+                            ImageCompress.process([url], options: opts)
+                        }
+                    },
+                    onCancel: { ActionPopover.shared.dismiss() })
+            }
+        }
+    }
+
+    @objc func resizeImage() {
+        guard let host else { return }
+        let inputs = urls
+        MainActor.assumeIsolated {
+            ActionPopover.shared.present(from: host) {
+                ImageResizePanel(
+                    urls: inputs,
+                    onResize: { mode in
+                        ActionPopover.shared.dismiss()
+                        ActionBridge.stage("Resizing", inputs: inputs) { url, _ in
+                            ImageResize.process([url], mode: mode)
+                        }
+                    },
+                    onCancel: { ActionPopover.shared.dismiss() })
+            }
+        }
     }
 
     // MARK: - Video conversion
@@ -517,7 +566,13 @@ final class ActionBridge: NSObject {
     /// batch. Beeps if nothing was produced.
     private func runStaged(_ label: String,
                            perFile: @escaping (URL, @escaping (Double) -> Void) -> [URL]) {
-        let inputs = urls
+        ActionBridge.stage(label, inputs: urls, perFile: perFile)
+    }
+
+    /// Instance-free variant of `runStaged`, for actions whose UI (e.g. the
+    /// compression popover) outlives the menu that owns the bridge.
+    static func stage(_ label: String, inputs: [URL],
+                      perFile: @escaping (URL, @escaping (Double) -> Void) -> [URL]) {
         let hud = MainActor.assumeIsolated { ProgressHUD(label: label) }
         DispatchQueue.global(qos: .userInitiated).async {
             var outputs: [URL] = []

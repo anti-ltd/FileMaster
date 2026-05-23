@@ -55,6 +55,8 @@ struct ShelfView: View {
     @State private var askSession: QASession? = nil
     @State private var askURLs: [URL] = []
     @State private var viewingCitation: Citation? = nil
+    @State private var isEditing = false
+    @State private var editModel: ImageEditModel? = nil
 
     enum ExpandedViewMode { case grid, list }
 
@@ -66,9 +68,14 @@ struct ShelfView: View {
     private let askViewSize = CGSize(width: 1180, height: 640)
     /// Width Ask shrinks to when the source pane is showing.
     private let askPaneViewingWidth: CGFloat = 400
+    /// Size when the image editor is open: files + viewer + controls panes.
+    private let editSize = CGSize(width: 1180, height: 660)
+    /// Width of the editor's third (controls) pane.
+    private let editControlsWidth: CGFloat = 280
 
     /// The window size for the den's current mode.
     private var currentSize: CGSize {
+        if isEditing { return editSize }
         if isAsking { return viewingCitation != nil ? askViewSize : askSize }
         return isExpanded ? expandedSize : compactSize
     }
@@ -82,7 +89,10 @@ struct ShelfView: View {
                     ? Color.white.opacity(0.03)
                     : Color.white.opacity(0.15))
 
-            if isAsking {
+            if isEditing, let editModel {
+                editSplitView(editModel)
+                    .transition(.opacity)
+            } else if isAsking {
                 askSplitView
                     .transition(.opacity)
             } else if isExpanded {
@@ -113,6 +123,7 @@ struct ShelfView: View {
         .clipShape(RoundedRectangle(cornerRadius: 24))
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isExpanded)
         .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isAsking)
+        .animation(.spring(response: 0.38, dampingFraction: 0.82), value: isEditing)
         .onChange(of: isExpanded) { _, expanded in
             postResize()
             if expanded {
@@ -120,12 +131,19 @@ struct ShelfView: View {
                 DispatchQueue.main.asyncAfter(deadline: .now() + 0.25) { itemsDealt = true }
             } else {
                 isAsking = false
+                isEditing = false
             }
         }
         .onChange(of: isAsking) { _, asking in
             if !asking { viewingCitation = nil }
             postResize()
             onAskModeChanged?(asking)
+        }
+        .onChange(of: isEditing) { _, editing in
+            if !editing { editModel = nil }
+            postResize()
+            // Make the den key so editor sliders/markup gestures receive input.
+            onAskModeChanged?(editing)
         }
         .onChange(of: viewingCitation) { _, _ in postResize() }
         .onAppear {
@@ -177,9 +195,14 @@ struct ShelfView: View {
             if !items.isEmpty {
                 VStack {
                     Spacer()
-                    HStack {
+                    HStack(spacing: 8) {
                         if settings.aiEnabled && !askableURLs.isEmpty {
                             compactAskButton.padding(.leading, 10).padding(.bottom, 8)
+                        }
+                        if let url = editableURL {
+                            compactEditButton(url)
+                                .padding(.leading, askableURLs.isEmpty ? 10 : 0)
+                                .padding(.bottom, 8)
                         }
                         Spacer()
                         shareButton.padding(.trailing, 10).padding(.bottom, 8)
@@ -294,7 +317,8 @@ struct ShelfView: View {
                                     onClick: { mods in handleSelectionClick(item: item, modifiers: mods) },
                                     onOpen: { NSWorkspace.shared.open(item.url) },
                                     dragURLs: { dragURLs(for: item) },
-                                    actionsMenu: { host in actionsMenu(for: item, host: host) }
+                                    actionsMenu: { host in actionsMenu(for: item, host: host) },
+                                    onDragEnded: handleDragOut
                                 )
                                     .scaleEffect(itemsDealt ? 1 : 0.4)
                                     .opacity(itemsDealt ? 1 : 0)
@@ -316,7 +340,8 @@ struct ShelfView: View {
                                     onClick: { mods in handleSelectionClick(item: item, modifiers: mods) },
                                     onOpen: { NSWorkspace.shared.open(item.url) },
                                     dragURLs: { dragURLs(for: item) },
-                                    actionsMenu: { host in actionsMenu(for: item, host: host) }
+                                    actionsMenu: { host in actionsMenu(for: item, host: host) },
+                                    onDragEnded: handleDragOut
                                 )
                                     .opacity(itemsDealt ? 1 : 0)
                                     .animation(
@@ -357,7 +382,8 @@ struct ShelfView: View {
                     urls: { selectedItems.map(\.url) },
                     onShare: { view in shareAll(from: view) },
                     onRemove: { removed in removeURLs(removed) },
-                    onAsk: { urls in enterAsk(urls: urls) }
+                    onAsk: { urls in enterAsk(urls: urls) },
+                    onEdit: { urls in if let u = urls.first { enterEdit(url: u) } }
                 )
                 .frame(height: 20)
                 .fixedSize(horizontal: false, vertical: true)
@@ -441,6 +467,36 @@ struct ShelfView: View {
         }
     }
 
+    // MARK: - Edit split (files left, editor right)
+
+    private func editSplitView(_ model: ImageEditModel) -> some View {
+        HStack(spacing: 0) {
+            expandedView
+                .frame(width: expandedSize.width)
+            Divider().opacity(0.4)
+            ImageEditorView(model: model, onClose: { withAnimation { isEditing = false } })
+                .frame(maxWidth: .infinity)
+            Divider().opacity(0.4)
+            ImageEditorControlsPane(model: model)
+                .frame(width: editControlsWidth)
+        }
+        .frame(width: currentSize.width, height: currentSize.height)
+    }
+
+    /// Open the image editor beside the file view for `url`. Expands the den if
+    /// needed and builds a fresh editor model for the chosen image.
+    private func enterEdit(url: URL) {
+        guard ImageConvert.isImage(url), let model = ImageEditModel(url: url) else {
+            NSSound.beep(); return
+        }
+        editModel = model
+        withAnimation {
+            isExpanded = true
+            isAsking = false
+            isEditing = true
+        }
+    }
+
     /// Tell the host window to resize to the den's current mode.
     private func postResize() {
         let size = currentSize
@@ -510,7 +566,8 @@ struct ShelfView: View {
                         MultiURLDragView(
                             urls: { items.map(\.url) },
                             onTap: { _ in withAnimation { isExpanded = true } },
-                            menu: { host in compactActionsMenu(host: host) }
+                            menu: { host in compactActionsMenu(host: host) },
+                            onDragEnded: handleDragOut
                         )
                     )
             } else {
@@ -519,7 +576,8 @@ struct ShelfView: View {
                         MultiURLDragView(
                             urls: { items.map(\.url) },
                             onTap: { _ in withAnimation { isExpanded = true } },
-                            menu: { host in compactActionsMenu(host: host) }
+                            menu: { host in compactActionsMenu(host: host) },
+                            onDragEnded: handleDragOut
                         )
                     )
             }
@@ -535,7 +593,8 @@ struct ShelfView: View {
                 urls: { selectedItems.map(\.url) },
                 onShare: { view in shareAll(from: view) },
                 onRemove: { removed in removeURLs(removed) },
-                onAsk: { urls in enterAsk(urls: urls) }
+                onAsk: { urls in enterAsk(urls: urls) },
+                onEdit: { urls in if let u = urls.first { enterEdit(url: u) } }
             )
             .frame(width: 20, height: 20)
         }
@@ -555,6 +614,19 @@ struct ShelfView: View {
         .help("Ask questions about these files, offline")
     }
 
+    /// Compact-mode Edit button — opens the image editor beside the files.
+    private func compactEditButton(_ url: URL) -> some View {
+        Button(action: { enterEdit(url: url) }) {
+            Image(systemName: "wand.and.stars")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(.tint)
+                .frame(width: 28, height: 28)
+                .background(.regularMaterial, in: Circle())
+        }
+        .buttonStyle(.plain)
+        .help("Edit this image")
+    }
+
     private func removeURLs(_ urls: [URL]) {
         let set = Set(urls)
         withAnimation {
@@ -566,6 +638,21 @@ struct ShelfView: View {
                 if selectionAnchor == id { selectionAnchor = nil }
             }
         }
+    }
+
+    /// When a staged file is dragged *out* of the den, drop its tile — but only
+    /// when the drop actually relocated the file (a move, or a drag to Trash), so
+    /// the tile no longer points at anything. A plain copy leaves the staged file
+    /// in place, so we keep the tile; same for aliases and cancelled drags.
+    /// Staged output is throwaway (purged at launch); user-owned files (outside
+    /// Staging) are never auto-removed regardless of operation.
+    private func handleDragOut(_ dragged: [URL], operation: NSDragOperation) {
+        guard operation.contains(.move) || operation.contains(.delete) else { return }
+        let stagingPath = Paths.staging.standardizedFileURL.path
+        let staged = dragged.filter {
+            $0.standardizedFileURL.path.hasPrefix(stagingPath + "/")
+        }
+        if !staged.isEmpty { removeURLs(staged) }
     }
 
     // MARK: - Helpers
@@ -655,7 +742,8 @@ struct ShelfView: View {
             host: host,
             onShare: { view in shareAll(from: view) },
             onRemove: { removed in removeURLs(removed) },
-            onRemoveFromDen: { removed in removeURLs(removed) }
+            onRemoveFromDen: { removed in removeURLs(removed) },
+            onEdit: { urls in if let u = urls.first { enterEdit(url: u) } }
         )
     }
 
@@ -667,7 +755,8 @@ struct ShelfView: View {
             host: host,
             onShare: { view in shareAll(from: view) },
             onRemove: { removed in removeURLs(removed) },
-            onRemoveFromDen: { removed in removeURLs(removed) }
+            onRemoveFromDen: { removed in removeURLs(removed) },
+            onEdit: { urls in if let u = urls.first { enterEdit(url: u) } }
         )
     }
 
@@ -711,6 +800,13 @@ struct ShelfView: View {
     /// that the offline Ask feature can search.
     private var askableURLs: [URL] {
         selectedItems.map(\.url).filter { TextExtractor.canExtract($0) }
+    }
+
+    /// The single image to edit: exactly one image among the current selection
+    /// (the editor is single-image), or nil to hide the entry point.
+    private var editableURL: URL? {
+        let images = selectedItems.map(\.url).filter { ImageConvert.isImage($0) }
+        return images.count == 1 ? images[0] : nil
     }
 
     private func askAI() { enterAsk(urls: askableURLs) }
@@ -889,6 +985,7 @@ struct ExpandedItemView: View {
     let onOpen: () -> Void
     let dragURLs: () -> [URL]
     let actionsMenu: (NSView) -> NSMenu?
+    var onDragEnded: ([URL], NSDragOperation) -> Void = { _, _ in }
     @State private var isHovered = false
 
     var body: some View {
@@ -916,7 +1013,8 @@ struct ExpandedItemView: View {
                             .padding(-6)
                     )
                     .overlay(
-                        MultiURLDragView(urls: dragURLs, onTap: onClick, onDoubleClick: onOpen, menu: actionsMenu)
+                        MultiURLDragView(urls: dragURLs, onTap: onClick, onDoubleClick: onOpen,
+                                         menu: actionsMenu, onDragEnded: onDragEnded)
                     )
 
                 if isHovered {
@@ -962,6 +1060,7 @@ struct ExpandedListRowView: View {
     let onOpen: () -> Void
     let dragURLs: () -> [URL]
     let actionsMenu: (NSView) -> NSMenu?
+    var onDragEnded: ([URL], NSDragOperation) -> Void = { _, _ in }
     @State private var isHovered = false
 
     var body: some View {
@@ -998,7 +1097,8 @@ struct ExpandedListRowView: View {
                         .strokeBorder(Color.accentColor.opacity(isSelected ? 0.8 : 0), lineWidth: 1.5)
                 )
         )
-        .overlay(MultiURLDragView(urls: dragURLs, onTap: onClick, onDoubleClick: onOpen, menu: actionsMenu))
+        .overlay(MultiURLDragView(urls: dragURLs, onTap: onClick, onDoubleClick: onOpen,
+                                  menu: actionsMenu, onDragEnded: onDragEnded))
         .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { isHovered = h } }
     }
 

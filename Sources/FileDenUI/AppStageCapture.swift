@@ -1,6 +1,7 @@
 #if APPSTAGE
 import AppKit
 import SwiftUI
+import ImageIO
 import FileDenCore
 import FileDenAI
 
@@ -52,6 +53,40 @@ enum AppStageCapture {
         case "convert":
             inner = AnyView(ShelfView(initialURLs: mediaFiles(), initiallyExpanded: true))
             cornerRadius = 24
+        case let s where s.hasPrefix("edit"):
+            if let model = ImageEditModel(url: demoImageURL()) {
+                switch s {
+                case "edit-filters":
+                    model.activeTool = .filters
+                    model.apply { $0.preset = .chrome }
+                case "edit-crop":
+                    model.activeTool = .crop
+                    model.setCropAspect(16.0 / 9.0)
+                case "edit-markup":
+                    model.activeTool = .markup
+                    model.addAnnotation(Annotation(kind: .arrow(CGPoint(x: 0.18, y: 0.25), CGPoint(x: 0.46, y: 0.52)), color: .red, width: 0.012))
+                    model.addAnnotation(Annotation(kind: .rect(CGRect(x: 0.55, y: 0.18, width: 0.32, height: 0.34)), color: .yellow, width: 0.009))
+                    model.addAnnotation(Annotation(kind: .text("Important!", CGPoint(x: 0.2, y: 0.08), 0.06), color: .white, width: 0.006))
+                    model.addAnnotation(Annotation(kind: .redactBlackout(CGRect(x: 0.12, y: 0.78, width: 0.34, height: 0.1)), color: .black))
+                case "edit-adjusted":
+                    model.apply { $0.exposure = 0.7; $0.contrast = 1.25; $0.saturation = 1.6; $0.warmth = 0.5 }
+                case "edit-export":
+                    model.activeTool = .export
+                default: break
+                }
+                inner = AnyView(
+                    HStack(spacing: 0) {
+                        ImageEditorView(model: model, onClose: {})
+                            .frame(width: 560)
+                        Divider().opacity(0.4)
+                        ImageEditorControlsPane(model: model)
+                            .frame(width: 280)
+                    }
+                    .frame(width: 841, height: 660))
+            } else {
+                inner = AnyView(Text("no demo image").frame(width: 841, height: 660))
+            }
+            cornerRadius = 16
         default: // "shelf"
             inner = AnyView(ShelfView(initialURLs: demoFiles(), initiallyExpanded: true))
             cornerRadius = 24
@@ -121,6 +156,36 @@ enum AppStageCapture {
     private static func mediaFiles() -> [URL] {
         placeholders(["hero.png", "product-shot.jpg", "walkthrough.mov",
                        "banner.webp", "thumbnail.heic"])
+    }
+
+    // A real, colourful test image so tone/crop/markup edits are visible.
+    private static func demoImageURL() -> URL {
+        let dir = Paths.appSupport.appendingPathComponent("DemoFiles", isDirectory: true)
+        try? FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        let url = dir.appendingPathComponent("editor-demo.png")
+        let w = 1280, h = 853
+        let space = CGColorSpaceCreateDeviceRGB()
+        guard let ctx = CGContext(data: nil, width: w, height: h, bitsPerComponent: 8,
+                                  bytesPerRow: 0, space: space,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return url }
+        let colors = [CGColor(red: 0.10, green: 0.45, blue: 0.92, alpha: 1),
+                      CGColor(red: 0.96, green: 0.42, blue: 0.30, alpha: 1)] as CFArray
+        if let grad = CGGradient(colorsSpace: space, colors: colors, locations: [0, 1]) {
+            ctx.drawLinearGradient(grad, start: .zero,
+                                   end: CGPoint(x: w, y: h), options: [])
+        }
+        ctx.setFillColor(CGColor(red: 1, green: 1, blue: 1, alpha: 0.85))
+        ctx.fillEllipse(in: CGRect(x: 180, y: 360, width: 320, height: 320))
+        ctx.setFillColor(CGColor(red: 1, green: 0.85, blue: 0.12, alpha: 0.92))
+        ctx.fillEllipse(in: CGRect(x: 720, y: 150, width: 400, height: 400))
+        ctx.setFillColor(CGColor(red: 0.15, green: 0.8, blue: 0.5, alpha: 0.9))
+        ctx.fill(CGRect(x: 450, y: 80, width: 240, height: 240))
+        guard let cg = ctx.makeImage(),
+              let dest = CGImageDestinationCreateWithURL(url as CFURL, "public.png" as CFString, 1, nil)
+        else { return url }
+        CGImageDestinationAddImage(dest, cg, nil)
+        CGImageDestinationFinalize(dest)
+        return url
     }
 
     private static func placeholders(_ names: [String]) -> [URL] {
