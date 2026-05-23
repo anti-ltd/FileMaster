@@ -374,6 +374,7 @@ private struct ExportControls: View {
     @State private var format: ImageConvert.Format = .png
     @State private var quality: Double = 0.9
     @State private var scale: Double = 1.0
+    @State private var showOverwriteConfirm = false
 
     private static let formats: [ImageConvert.Format] =
         [.png, .jpeg, .heic, .tiff, .webp, .avif].filter { ImageConvert.canEncode($0) }
@@ -414,10 +415,29 @@ private struct ExportControls: View {
             .buttonStyle(.borderedProminent)
             .disabled(model.isExporting)
 
+            Button { showOverwriteConfirm = true } label: {
+                Label("Overwrite Original", systemImage: "square.and.arrow.down")
+                    .font(.system(size: 12, weight: .medium))
+                    .frame(maxWidth: .infinity)
+            }
+            .controlSize(.large)
+            .buttonStyle(.bordered)
+            .disabled(model.isExporting)
+            .help("Replace the original file with your edited version")
+
             Spacer(minLength: 0)
         }
         .padding(.horizontal, 16)
         .padding(.vertical, 14)
+        .confirmationDialog("Overwrite the original file?",
+                            isPresented: $showOverwriteConfirm, titleVisibility: .visible) {
+            Button("Overwrite Original", role: .destructive) {
+                Task { await model.overwriteOriginal(quality: quality, scale: scale) }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This permanently replaces “\(model.url.lastPathComponent)” with your edited version, keeping its original format. This can’t be undone.")
+        }
     }
 
     @ViewBuilder

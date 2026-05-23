@@ -35,6 +35,8 @@ struct ShelfView: View {
     var initiallyTargeted: Bool = false
     /// Start in list mode instead of grid (used for screenshots).
     var initialViewMode: ExpandedViewMode = .grid
+    /// Open straight into the image editor on this URL (used for screenshots).
+    var initiallyEditingURL: URL? = nil
 
     @Environment(\.colorScheme) private var colorScheme
     @ObservedObject private var settings = FileDenSettings.shared
@@ -56,7 +58,10 @@ struct ShelfView: View {
     @State private var askURLs: [URL] = []
     @State private var viewingCitation: Citation? = nil
     @State private var isEditing = false
-    @State private var editModel: ImageEditModel? = nil
+    /// While editing, the file list doubles as editor tabs: one cached model per
+    /// image so switching back and forth preserves each image's edits.
+    @State private var editModels: [URL: ImageEditModel] = [:]
+    @State private var currentEditURL: URL? = nil
 
     enum ExpandedViewMode { case grid, list }
 
@@ -89,8 +94,8 @@ struct ShelfView: View {
                     ? Color.white.opacity(0.03)
                     : Color.white.opacity(0.15))
 
-            if isEditing, let editModel {
-                editSplitView(editModel)
+            if isEditing, let url = currentEditURL, let editModel = editModels[url] {
+                editSplitView(editModel, url: url)
                     .transition(.opacity)
             } else if isAsking {
                 askSplitView
@@ -140,7 +145,7 @@ struct ShelfView: View {
             onAskModeChanged?(asking)
         }
         .onChange(of: isEditing) { _, editing in
-            if !editing { editModel = nil }
+            if !editing { editModels = [:]; currentEditURL = nil }
             postResize()
             // Make the den key so editor sliders/markup gestures receive input.
             onAskModeChanged?(editing)
@@ -153,6 +158,7 @@ struct ShelfView: View {
             if initiallyExpanded { isExpanded = true }
             if initiallyTargeted { isTargeted = true }
             if initialViewMode == .list { viewMode = .list }
+            if let editURL = initiallyEditingURL { enterEdit(url: editURL) }
             onEmpty? {
                 if !items.isEmpty {
                     RecentDensStore.shared.record(urls: items.map(\.url))
@@ -313,8 +319,9 @@ struct ShelfView: View {
                                 ExpandedItemView(
                                     item: item,
                                     isSelected: selection.contains(item.id),
+                                    isEditTab: isEditing && currentEditURL == item.url,
                                     onRemove: { remove(item) },
-                                    onClick: { mods in handleSelectionClick(item: item, modifiers: mods) },
+                                    onClick: { mods in handleItemClick(item, modifiers: mods) },
                                     onOpen: { NSWorkspace.shared.open(item.url) },
                                     dragURLs: { dragURLs(for: item) },
                                     actionsMenu: { host in actionsMenu(for: item, host: host) },
@@ -336,8 +343,9 @@ struct ShelfView: View {
                                 ExpandedListRowView(
                                     item: item,
                                     isSelected: selection.contains(item.id),
+                                    isEditTab: isEditing && currentEditURL == item.url,
                                     onRemove: { remove(item) },
-                                    onClick: { mods in handleSelectionClick(item: item, modifiers: mods) },
+                                    onClick: { mods in handleItemClick(item, modifiers: mods) },
                                     onOpen: { NSWorkspace.shared.open(item.url) },
                                     dragURLs: { dragURLs(for: item) },
                                     actionsMenu: { host in actionsMenu(for: item, host: host) },
@@ -378,16 +386,14 @@ struct ShelfView: View {
                     .padding(.trailing, 6)
                 }
                 ActionsMenuButton(
-                    title: actionsButtonLabel,
                     urls: { selectedItems.map(\.url) },
                     onShare: { view in shareAll(from: view) },
                     onRemove: { removed in removeURLs(removed) },
                     onAsk: { urls in enterAsk(urls: urls) },
                     onEdit: { urls in if let u = urls.first { enterEdit(url: u) } }
                 )
-                .frame(height: 20)
-                .fixedSize(horizontal: false, vertical: true)
-                .layoutPriority(-1)
+                .frame(width: 28, height: 22)
+                .help("Actions")
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 10)
@@ -469,31 +475,52 @@ struct ShelfView: View {
 
     // MARK: - Edit split (files left, editor right)
 
-    private func editSplitView(_ model: ImageEditModel) -> some View {
+    private func editSplitView(_ model: ImageEditModel, url: URL) -> some View {
         HStack(spacing: 0) {
             expandedView
                 .frame(width: expandedSize.width)
             Divider().opacity(0.4)
+            // `.id(url)` rebuilds the viewer/controls per tab so transient gesture
+            // state (in-progress markup, export fields) resets when switching images.
             ImageEditorView(model: model, onClose: { withAnimation { isEditing = false } })
                 .frame(maxWidth: .infinity)
+                .id(url)
             Divider().opacity(0.4)
             ImageEditorControlsPane(model: model)
                 .frame(width: editControlsWidth)
+                .id(url)
         }
         .frame(width: currentSize.width, height: currentSize.height)
     }
 
-    /// Open the image editor beside the file view for `url`. Expands the den if
-    /// needed and builds a fresh editor model for the chosen image.
+    /// Open the image editor beside the file view for `url`, or switch to it if
+    /// already editing — the file list acts as editor tabs. Each image keeps its
+    /// own cached model so its edits survive switching away and back.
     private func enterEdit(url: URL) {
-        guard ImageConvert.isImage(url), let model = ImageEditModel(url: url) else {
-            NSSound.beep(); return
+        guard ImageConvert.isImage(url) else { NSSound.beep(); return }
+        if editModels[url] == nil {
+            guard let model = ImageEditModel(url: url) else { NSSound.beep(); return }
+            editModels[url] = model
         }
-        editModel = model
+        currentEditURL = url
+        // Highlight the active tab in the list.
+        if let id = items.first(where: { $0.url == url })?.id {
+            selection = [id]; selectionAnchor = id
+        }
         withAnimation {
             isExpanded = true
             isAsking = false
             isEditing = true
+        }
+    }
+
+    /// Click handling for a file tile: while editing, clicking an image switches
+    /// the active editor tab; otherwise it's normal selection.
+    private func handleItemClick(_ item: ShelfItem, modifiers: NSEvent.ModifierFlags) {
+        if isEditing, ImageConvert.isImage(item.url), !modifiers.contains(.command), !modifiers.contains(.shift) {
+            enterEdit(url: item.url)
+        } else {
+            handleSelectionClick(item: item, modifiers: modifiers)
         }
     }
 
@@ -636,6 +663,15 @@ struct ShelfView: View {
             if let id = items.first(where: { $0.url == url })?.id {
                 selection.remove(id)
                 if selectionAnchor == id { selectionAnchor = nil }
+            }
+            editModels[url] = nil
+        }
+        // If the edited tab was removed, switch to another image or leave editing.
+        if let current = currentEditURL, set.contains(current) {
+            if let next = items.first(where: { ImageConvert.isImage($0.url) })?.url {
+                enterEdit(url: next)
+            } else {
+                withAnimation { isEditing = false }
             }
         }
     }
@@ -843,14 +879,6 @@ struct ShelfView: View {
         }
     }
 
-    private var actionsButtonLabel: String {
-        if selection.isEmpty { return "Actions" }
-        if selection.count == 1, let item = items.first(where: { selection.contains($0.id) }) {
-            return "Actions: \(item.name)"
-        }
-        return "Actions (\(selection.count))"
-    }
-
     private func shareAll(from view: NSView) {
         shareSourceView = view
         let targets = selectedItems
@@ -980,6 +1008,7 @@ struct ShelfView: View {
 struct ExpandedItemView: View {
     let item: ShelfItem
     let isSelected: Bool
+    var isEditTab: Bool = false
     let onRemove: () -> Void
     let onClick: (NSEvent.ModifierFlags) -> Void
     let onOpen: () -> Void
@@ -1005,10 +1034,11 @@ struct ExpandedItemView: View {
                     .shadow(color: .black.opacity(0.12), radius: 4, x: 0, y: 2)
                     .background(
                         RoundedRectangle(cornerRadius: 12)
-                            .fill(Color.accentColor.opacity(isSelected ? 0.28 : 0))
+                            .fill(Color.accentColor.opacity(highlighted ? 0.28 : 0))
                             .overlay(
                                 RoundedRectangle(cornerRadius: 12)
-                                    .strokeBorder(Color.accentColor.opacity(isSelected ? 0.9 : 0), lineWidth: 2)
+                                    .strokeBorder(Color.accentColor.opacity(highlighted ? 0.9 : 0),
+                                                  lineWidth: isEditTab ? 2.5 : 2)
                             )
                             .padding(-6)
                     )
@@ -1033,7 +1063,7 @@ struct ExpandedItemView: View {
             Text(item.name)
                 .font(.system(size: 10))
                 .lineLimit(1)
-                .foregroundStyle(isSelected ? .primary : .secondary)
+                .foregroundStyle(highlighted ? .primary : .secondary)
                 .frame(width: 80)
 
             Text(fileSize)
@@ -1043,6 +1073,7 @@ struct ExpandedItemView: View {
         .onHover { h in withAnimation(.easeInOut(duration: 0.15)) { isHovered = h } }
     }
 
+    private var highlighted: Bool { isSelected || isEditTab }
     private var isDirectory: Bool { item.url.isDirectoryItem }
 
     private var fileSize: String {
@@ -1055,6 +1086,7 @@ struct ExpandedItemView: View {
 struct ExpandedListRowView: View {
     let item: ShelfItem
     let isSelected: Bool
+    var isEditTab: Bool = false
     let onRemove: () -> Void
     let onClick: (NSEvent.ModifierFlags) -> Void
     let onOpen: () -> Void
@@ -1091,10 +1123,11 @@ struct ExpandedListRowView: View {
         .padding(.vertical, 5)
         .background(
             RoundedRectangle(cornerRadius: 8)
-                .fill(Color.accentColor.opacity(isSelected ? 0.22 : 0))
+                .fill(Color.accentColor.opacity(isSelected || isEditTab ? 0.22 : 0))
                 .overlay(
                     RoundedRectangle(cornerRadius: 8)
-                        .strokeBorder(Color.accentColor.opacity(isSelected ? 0.8 : 0), lineWidth: 1.5)
+                        .strokeBorder(Color.accentColor.opacity(isSelected || isEditTab ? 0.8 : 0),
+                                      lineWidth: isEditTab ? 2 : 1.5)
                 )
         )
         .overlay(MultiURLDragView(urls: dragURLs, onTap: onClick, onDoubleClick: onOpen,

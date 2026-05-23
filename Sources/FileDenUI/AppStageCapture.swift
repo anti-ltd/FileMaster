@@ -101,6 +101,9 @@ enum AppStageCapture {
             .environment(\.colorScheme, .dark)
 
         let host = NSHostingController(rootView: root)
+        // Don't let the controller auto-track the SwiftUI ideal size; we set the
+        // window size explicitly below (the multi-pane editor mis-measures).
+        host.sizingOptions = []
         let window = CaptureWindow(
             contentRect: NSRect(x: 0, y: 0, width: 360, height: 420),
             styleMask: [.borderless],
@@ -118,12 +121,25 @@ enum AppStageCapture {
 
         // ShelfView expands in onAppear, so re-measure and size the window to the
         // settled content before reporting.
+        // The editor's flexible multi-pane layout doesn't measure cleanly via
+        // `fittingSize` (the real app sizes its window explicitly), so pin it.
+        let fixedSize: NSSize? = state.hasPrefix("edit") ? NSSize(width: 841, height: 660) : nil
+
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.7) {
             host.view.layoutSubtreeIfNeeded()
-            let fit = host.view.fittingSize
-            if fit.width > 80 && fit.height > 80 {
-                window.setContentSize(fit)
+            if let fixedSize {
+                window.contentMinSize = fixedSize
+                window.contentMaxSize = fixedSize
+                var frame = window.frame
+                frame.size = fixedSize
+                window.setFrame(frame, display: true)
                 window.center()
+            } else {
+                let fit = host.view.fittingSize
+                if fit.width > 80 && fit.height > 80 {
+                    window.setContentSize(fit)
+                    window.center()
+                }
             }
             NSApp.activate(ignoringOtherApps: true)
             window.makeKeyAndOrderFront(nil)

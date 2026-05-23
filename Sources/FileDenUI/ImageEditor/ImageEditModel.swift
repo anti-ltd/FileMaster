@@ -59,7 +59,7 @@ final class ImageEditModel: ObservableObject {
     }
 
     let url: URL
-    let sourcePixelSize: CGSize
+    @Published private(set) var sourcePixelSize: CGSize
 
     @Published var state = EditState() { didSet { onStateChanged() } }
     @Published private(set) var preview: CGImage?
@@ -78,7 +78,7 @@ final class ImageEditModel: ObservableObject {
     /// Stroke width (and, for text, font size) as a fraction of the longest side.
     @Published var markupWidth: Double = 0.006
 
-    private let source: CIImage
+    private var source: CIImage              // reloaded after an in-place overwrite
     private var bgRemoved: CIImage?           // cached subject isolation
     private var bgRemovedComputed = false
 
@@ -288,6 +288,69 @@ final class ImageEditModel: ObservableObject {
         if let result { DenManager.shared.openDen(with: [result]) }
         else { NSSound.beep() }
         return result
+    }
+
+    /// Re-encode the edited result back onto the original file, in its original
+    /// format. Destructive — the previous contents are gone. Because `source`
+    /// reads the file lazily, we reload from the freshly written file and reset to
+    /// a pristine state afterwards (the edits now live in the file itself).
+    @discardableResult
+    func overwriteOriginal(quality: Double, scale: Double) async -> Bool {
+        isExporting = true
+        defer { isExporting = false }
+
+        let s = state
+        let src = source
+        let bg = state.removeBackground ? bgRemoved : nil
+        let annotations = state.annotations
+        let target = url
+        let format = Self.originalFormat(for: target)
+
+        let ok = await Task.detached(priority: .userInitiated) { () -> Bool in
+            let composed = ImageEditEngine.shared.composed(source: src, bgRemoved: bg, state: s)
+            let maxDim: CGFloat? = scale < 0.999
+                ? max(composed.extent.width, composed.extent.height) * CGFloat(scale)
+                : nil
+            guard var cg = ImageEditEngine.shared.cgImage(composed, maxDimension: maxDim) else { return false }
+            cg = AnnotationBaker.bake(annotations, onto: cg)
+            return Self.writeInPlace(cg, to: target, format: format, quality: quality)
+        }.value
+
+        guard ok else { NSSound.beep(); return false }
+
+        if let reloaded = ImageEditEngine.loadOriented(target) {
+            source = reloaded
+            sourcePixelSize = reloaded.extent.size
+        }
+        bgRemoved = nil
+        bgRemovedComputed = false
+        undoStack = []
+        redoStack = []
+        filterThumbs = []
+        state = EditState()        // didSet → re-render the now-pristine file
+        generateFilterThumbs()
+        return true
+    }
+
+    /// The original file's own format (so an in-place overwrite keeps its type),
+    /// falling back to PNG when the OS can't re-encode it.
+    private static func originalFormat(for url: URL) -> ImageConvert.Format {
+        for f in ImageConvert.Format.allCases where f.matches(url) && ImageConvert.canEncode(f) {
+            return f
+        }
+        return .png
+    }
+
+    /// Encode `image` and atomically replace the file at `url`.
+    private nonisolated static func writeInPlace(_ image: CGImage, to url: URL,
+                                                 format: ImageConvert.Format, quality: Double) -> Bool {
+        let data = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(data, format.typeID as CFString, 1, nil) else { return false }
+        var options: [CFString: Any] = [:]
+        if format.isLossy { options[kCGImageDestinationLossyCompressionQuality] = quality }
+        CGImageDestinationAddImage(dest, image, options as CFDictionary)
+        guard CGImageDestinationFinalize(dest) else { return false }
+        return (try? (data as Data).write(to: url, options: .atomic)) != nil
     }
 
     /// Write `image` to the staging area as `format`. PNG/TIFF ignore quality and

@@ -35,7 +35,7 @@ struct QAView: View {
                 VStack(spacing: 6) {
                     Image(systemName: "bubble.left.and.text.bubble.right")
                         .font(.system(size: 26)).foregroundStyle(.secondary)
-                    Text("Chat with your documents.")
+                    Text("Chat")
                         .font(.system(size: 13)).foregroundStyle(.secondary)
                     Text("Grounded answers cite the exact passage — click to jump there.")
                         .font(.system(size: 11)).foregroundStyle(.tertiary)

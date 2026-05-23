@@ -33,7 +33,11 @@
 ## Screenshots
 
 <div align="center">
-<img src="Resources/screenshots/shelf-framed.png" width="380" alt="A den of stashed files"> <img src="Resources/screenshots/ask-framed.png" width="380" alt="Ask — chat with your documents">
+<img src="Resources/screenshots/shelf-framed.png" width="380" alt="A den of stashed files"> <img src="Resources/screenshots/ask-framed.png" width="380" alt="Ask — chat about your documents">
+
+<br><br>
+
+<img src="Resources/screenshots/editor-adjust.png" width="380" alt="Image editor — tone adjustments"> <img src="Resources/screenshots/editor-markup.png" width="380" alt="Image editor — markup & redaction">
 </div>
 
 ---
@@ -42,15 +46,16 @@
 
 FileDen is a tiny floating window — a "den" — that holds files while you move them between apps, archives, uploads, and conversations. Drag in. Drag out. Drop a folder, get a zip. Shake your mouse, get a fresh den near the cursor. Hit a hotkey, same. Close it, the contents go to recents.
 
-And now it can *read* them: drop documents into a den and **chat** with them — ask questions in a conversation and get grounded, cited answers, entirely on-device. See [Ask](#ask-chat-with-your-documents).
+And now it can *read* them: drop documents into a den and **ask questions about them** in a conversation, getting grounded, cited answers entirely on-device. See [Ask](#ask-chat-about-your-documents). It can also *edit* them — a full image editor lives right inside the den. See [Image editor](#image-editor).
 
-Built in Swift + AppKit + SwiftUI for macOS 14+. No Electron, no background daemons, no telemetry. The document chat runs on Apple's on-device frameworks — nothing leaves your Mac.
+Built in Swift + AppKit + SwiftUI for macOS 14+. No Electron, no background daemons, no telemetry. Document Q&A and image editing both run on Apple's on-device frameworks — nothing leaves your Mac.
 
 ---
 
 ## Highlights
 
-- **Chat with your documents, offline.** Drop in PDFs (scans included), Word, Markdown, text, or code, hit *Ask*, and have a conversation with cited answers — fully on-device. [Details ↓](#ask-chat-with-your-documents)
+- **Ask your documents, offline.** Drop in PDFs (scans included), Word, Markdown, text, or code, hit *Ask*, and have a conversation about them with cited answers — fully on-device. [Details ↓](#ask-chat-about-your-documents)
+- **Full image editor, built in.** Open any image into an inline editor: live tone adjustments and filters, crop / rotate / straighten / flip, freehand markup, shapes, text, redaction (blackout / pixelate), and one-tap background removal — all GPU-accelerated and on-device. Export to a new den or overwrite the original. [Details ↓](#image-editor)
 - **Multiple dens.** Spawn as many as you want — each is independent.
 - **Drag-out as multi-file.** One drag carries the whole stack.
 - **Smart actions menu.** Open, Quick Look, Reveal, Copy, Duplicate, Copy Path, Compress to ZIP, Unarchive, Print, Set as Wallpaper, Combine to PDF, Share, Move to Trash — surfaced based on file type.
@@ -73,7 +78,8 @@ A den has two modes:
 |------|----------|
 | **Compact** | 200×200, dashed drop zone when empty, file thumbnail / stacked cards when full. Bottom-right action button. |
 | **Expanded** | 340×420, grid or list view of all items, multi-select with ⌘/⇧/⌃-click, actions button. |
-| **Ask** | Expands into a side-by-side split — files on the left, a chat with the documents on the right. Clicking a cited source opens a third pane showing it highlighted. Everything stays in the one den window. |
+| **Ask** | Expands into a side-by-side split — files on the left, a chat about the documents on the right. Clicking a cited source opens a third pane showing it highlighted. Everything stays in the one den window. |
+| **Edit** | A three-pane image editor — files on the left (doubling as image tabs), the live canvas in the middle, the tool controls on the right. Click another image to switch tabs; each keeps its own edits. |
 
 Tap the file/stack to expand. Chevron back to collapse. The window floats above other apps and follows you across spaces.
 
@@ -97,21 +103,22 @@ The shortcut shown in the menu auto-mirrors whatever is configured. Disable the 
 The actions button (•••) replaces the share button and adapts to selection:
 
 - Always: Open, Quick Look, Reveal in Finder, Copy, Duplicate, Copy Path, Share…, Move to Trash.
-- Any searchable document in the selection (PDF / Word / Markdown / text / code / …) → **Ask AI…** — opens an inline [chat](#ask-chat-with-your-documents) about it.
+- Any searchable document in the selection (PDF / Word / Markdown / text / code / …) → **Ask AI…** — opens an inline [chat](#ask-chat-about-your-documents) about it.
 - Folders or multiple items → **Compress to ZIP**.
 - All archives → **Unarchive**.
 - All printable (pdf/img/txt/rtf) → **Print**.
-- All images → **Set as Wallpaper**, **Combine to PDF**, **Convert Image** ▸ To JPEG / HEIC / PNG / TIFF / WebP / AVIF (the last two appear only where the OS can encode them). All GIFs also get → **To Video (MP4)**.
+- All images → **Set as Wallpaper**, **Combine to PDF**, **Convert Image** ▸ To JPEG / HEIC / PNG / TIFF / WebP / AVIF (the last two appear only where the OS can encode them), plus quick **Resize…** and **Compress Image…** panels. All GIFs also get → **To Video (MP4)**.
+- A single image → **Edit Image…** — opens the full inline [image editor](#image-editor).
 - All PDFs → **PDF Tools** ▸ Merge PDFs (2+), Split into Pages, Export Pages as Images, Extract Images, Extract Text.
 - All videos → **Convert Video** ▸ To HEVC (smaller), To MP4, To MOV, To GIF, Poster Frame, Extract Audio.
 
 PDF, image, and video tools all run natively (PDFKit + CoreGraphics + ImageIO + AVFoundation, no external binaries). Conversions are visually lossless — lossy targets use a near-1.0 quality, lossless targets are exact, and video container changes rewrap without re-encoding when the codec allows. (GIF is the exception: it's a 256-colour format, so a clip exported to GIF is necessarily lossy.) Long jobs show a floating progress HUD; output is staged into a new den — nothing is written next to your originals until you drag it there.
 
-In the expanded view, the button label reflects context: *Actions*, *Actions: filename*, or *Actions (N)*.
+The actions button is a compact ••• icon, right-aligned in the expanded view's bottom bar; it acts on the current selection (or every item, when nothing is selected).
 
 ---
 
-## Ask: chat with your documents
+## Ask: chat about your documents
 
 Drop documents into a den and hit **Ask** to have a conversation about them — entirely on-device, no network, no API keys, no subscription. The den widens into a split: your files on the left, the chat on the right. Built for the two things every other "chat with your PDFs" tool gets wrong: **accuracy** and **speed**.
 
@@ -121,11 +128,32 @@ Drop documents into a den and hit **Ask** to have a conversation about them — 
 - **Cited, and clickable.** Each answer carries a small **sources** chip; open it for a quick rundown, then click a source to open it in a third pane — PDFs jump to the page with the passage highlighted; text / Markdown / HTML / RTF / DOCX scroll to the highlighted span. One window holds everything — no floating clutter.
 - **It uses tools.** The model can call a calculator for exact arithmetic, so "total revenue" returns the right number instead of a guess. The tool system is built to grow (document actions are next).
 - **Never a dead end.** No Apple Intelligence (older Macs, or it's switched off), or the model declines? Ask falls back to the most relevant passages with citations — same retrieval, just without the written prose. It never shows a failure.
-- **Notebooks.** Save a set of documents as a named notebook and reopen it from the menu bar to chat with it anytime. Indexes are cached, so reopening is instant.
+- **Notebooks.** Save a set of documents as a named notebook and reopen it from the menu bar to ask it anytime. Indexes are cached, so reopening is instant.
 
 Open it from the **Ask AI…** item in a den's actions menu (or the sparkle button on a compact den), or by opening a saved **Notebook** from the menu bar. Turn the whole feature on or off — and toggle written answers vs. passages-only — in **Settings → AI**.
 
 **Requirements.** Indexing, retrieval, OCR, and passage search run on macOS 14+. Written answers use Apple's Foundation Models and need macOS 26 with Apple Intelligence enabled; the framework is weak-linked, so FileDen runs fine without it.
+
+---
+
+## Image editor
+
+Open any image into a full editor that lives right inside the den — no separate app, no upload. The den widens into three panes: your files on the left (doubling as image **tabs** — click another image to switch, and each tab keeps its own edits), the live canvas in the middle, and the tool controls on the right. Everything is GPU-accelerated through Core Image + Metal and runs entirely on-device, so adjustments preview in real time and the CPU stays idle when you're not dragging.
+
+<div align="center">
+<img src="Resources/screenshots/editor-crop.png" width="380" alt="Image editor — crop, rotate, straighten"> <img src="Resources/screenshots/editor-filters.png" width="380" alt="Image editor — filter presets">
+</div>
+
+- **Adjust.** Live exposure, brightness, contrast, saturation, vibrance, warmth, highlights, shadows, and sharpness — click any value to reset it.
+- **Filters.** One-tap looks (Mono, Noir, Fade, Chrome, Instant, Process, Transfer, Sepia), shown as live thumbnails of your own image.
+- **Crop & geometry.** Interactive crop with a rule-of-thirds grid and aspect presets (Free / 1:1 / 4:3 / 3:2 / 16:9 / 9:16), 90° rotate, flip, and fine straighten.
+- **Markup.** Freehand pen, line, arrow, box, oval, highlighter, and text — pick a colour and thickness. Drawn vector-clean and baked in only on export.
+- **Redaction.** Blackout or pixelate any region; redactions are burned into the pixels, so they can't be peeled back off the exported file.
+- **Background removal.** One-tap on-device subject isolation (Vision), straight onto transparency.
+- **Undo / redo** the full edit history, or reset to the original in one click.
+- **Export** to a new den in any format (PNG / JPEG / HEIC / TIFF / WebP / AVIF) with quality and scale — or **Overwrite Original** (behind a confirmation) to replace the file in place, keeping its format.
+
+Open it from **Edit Image…** in a den's actions menu, or the wand button on a compact den. Runs on macOS 14+; background removal uses the Vision foreground-mask API.
 
 ---
 
@@ -152,7 +180,7 @@ make clean      # clear SwiftPM + build/
 make reset      # wipe ~/Library/Application Support/counter-ltd/fileden
 ```
 
-There are no third-party dependencies — everything is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for the Ask feature).
+There are no third-party dependencies — everything is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, Core Image + Metal for the image editor, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for the Ask feature).
 
 Codesigning uses a local `FileDen Dev` code-signing certificate if one exists in your keychain, otherwise it falls back to ad-hoc.
 
