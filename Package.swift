@@ -6,22 +6,22 @@ import Foundation
 // only when it's actually present — a fresh clone without it still builds.
 let testsPath = URL(fileURLWithPath: #filePath)
     .deletingLastPathComponent()
-    .appendingPathComponent("Tests/FileDenAITests")
+    .appendingPathComponent("Tests/FileMasterAITests")
 let hasTests = FileManager.default.fileExists(atPath: testsPath.path)
 
 var targets: [Target] = [
         .target(
-            name: "FileDenCore",
-            path: "Sources/FileDenCore"
+            name: "FileMasterCore",
+            path: "Sources/FileMasterCore"
         ),
         // On-device RAG engine: extraction, chunking, embeddings, vector + lexical
         // search, retrieval, generation. Pure logic — no AppKit/SwiftUI. Apple
         // system frameworks only. FoundationModels (M2) is weak-linked here so the
         // app still launches on macOS < 26 / non-Apple-Intelligence Macs.
         .target(
-            name: "FileDenAI",
-            dependencies: ["FileDenCore"],
-            path: "Sources/FileDenAI",
+            name: "FileMasterAI",
+            dependencies: ["FileMasterCore"],
+            path: "Sources/FileMasterAI",
             swiftSettings: [
                 // Opt into the current CBLAS headers so Accelerate calls aren't
                 // flagged deprecated. We use the 32-bit (LP64) interface.
@@ -40,9 +40,15 @@ var targets: [Target] = [
             ]
         ),
         .target(
-            name: "FileDenUI",
-            dependencies: ["FileDenCore", "FileDenAI"],
-            path: "Sources/FileDenUI",
+            name: "FileMasterUI",
+            dependencies: [
+                "FileMasterCore",
+                "FileMasterAI",
+                // Shared UX layer — settings popover shell and menu-bar host live
+                // here so every app we ship matches pixel-for-pixel.
+                .product(name: "iUX-MacOS", package: "iUX-MacOS"),
+            ],
+            path: "Sources/FileMasterUI",
             linkerSettings: [
                 .linkedFramework("QuickLookThumbnailing"),
                 .linkedFramework("PDFKit"),
@@ -51,30 +57,35 @@ var targets: [Target] = [
             ]
         ),
         .executableTarget(
-            name: "FileDen",
-            dependencies: ["FileDenCore", "FileDenAI", "FileDenUI"],
-            path: "Sources/FileDen"
+            name: "FileMaster",
+            dependencies: ["FileMasterCore", "FileMasterAI", "FileMasterUI"],
+            path: "Sources/FileMaster"
         ),
 ]
 
 if hasTests {
     targets.append(
         .testTarget(
-            name: "FileDenAITests",
-            dependencies: ["FileDenAI"],
-            path: "Tests/FileDenAITests"
+            name: "FileMasterAITests",
+            dependencies: ["FileMasterAI"],
+            path: "Tests/FileMasterAITests"
         )
     )
 }
 
 let package = Package(
-    name: "FileDen",
+    name: "FileMaster",
     platforms: [.macOS(.v14)],
     products: [
-        .library(name: "FileDenCore", targets: ["FileDenCore"]),
-        .library(name: "FileDenAI", targets: ["FileDenAI"]),
-        .library(name: "FileDenUI", targets: ["FileDenUI"]),
-        .executable(name: "FileDen", targets: ["FileDen"]),
+        .library(name: "FileMasterCore", targets: ["FileMasterCore"]),
+        .library(name: "FileMasterAI", targets: ["FileMasterAI"]),
+        .library(name: "FileMasterUI", targets: ["FileMasterUI"]),
+        .executable(name: "FileMaster", targets: ["FileMaster"]),
+    ],
+    dependencies: [
+        // Shared UX layer — settings popover, menu-bar host, overlay windows.
+        // Local path so the two packages can iterate in lock-step.
+        .package(path: "../iUX-MacOS"),
     ],
     targets: targets
 )

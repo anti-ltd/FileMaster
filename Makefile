@@ -1,11 +1,11 @@
-APP_NAME       := FileDen
-BUNDLE_ID      := ltd.anti.FileDen
+APP_NAME       := FileMaster
+BUNDLE_ID      := ltd.anti.filemaster
 CONFIG         := release
 BUILD_DIR      := build
 APP_BUNDLE     := $(BUILD_DIR)/$(APP_NAME).app
 EXEC_NAME      := $(APP_NAME)
 INFO_PLIST     := Resources/Info.plist
-ENTITLEMENTS   := Resources/FileDen.entitlements
+ENTITLEMENTS   := Resources/FileMaster.entitlements
 ICONSET        := $(BUILD_DIR)/AppIcon.iconset
 ICNS           := Resources/AppIcon.icns
 
@@ -15,9 +15,9 @@ STRIP          := strip
 
 # Stable signing identity so macOS keeps the Accessibility/TCC grant (hotkey +
 # shake) across rebuilds. Falls back to ad-hoc ("-") on machines without the
-# self-signed "FileDen Dev" cert. Create one once via Keychain Access →
+# self-signed "FileMaster Dev" cert. Create one once via Keychain Access →
 # Certificate Assistant → Create a Certificate → type "Code Signing".
-SIGN_ID        := $(shell security find-certificate -c "FileDen Dev" >/dev/null 2>&1 && echo "FileDen Dev" || echo -)
+SIGN_ID        := $(shell security find-certificate -c "FileMaster Dev" >/dev/null 2>&1 && echo "FileMaster Dev" || echo -)
 
 # Size-optimised release flags:
 #   -Osize         optimise for binary size over speed
@@ -36,11 +36,11 @@ all: build
 help:
 	@echo "Targets:"
 	@echo "  make build    — swift build -c release"
-	@echo "  make bundle   — assemble FileDen.app under build/"
+	@echo "  make bundle   — assemble FileMaster.app under build/"
 	@echo "  make run      — bundle + relaunch app"
-	@echo "  make release  — size-optimised bundle, stripped + signed (FileDen Dev cert if present, else ad-hoc)"
+	@echo "  make release  — size-optimised bundle, stripped + signed (FileMaster Dev cert if present, else ad-hoc)"
 	@echo "  make debug    — debug build + run in foreground"
-	@echo "  make stop     — kill running FileDen"
+	@echo "  make stop     — kill running FileMaster"
 	@echo "  make clean    — swift package clean + remove build/"
 	@echo "  make icon     — render AppIcon.icns from AppIconRenderer"
 
@@ -104,8 +104,8 @@ stop:
 	@pkill -x $(EXEC_NAME) 2>/dev/null || true
 
 reset:
-	@rm -rf "$$HOME/Library/Application Support/counter-ltd/fileden"
-	@echo "→ wiped ~/Library/Application Support/counter-ltd/fileden"
+	@rm -rf "$$HOME/Library/Application Support/counter-ltd/filemaster"
+	@echo "→ wiped ~/Library/Application Support/counter-ltd/filemaster"
 
 screenshot: bundle
 	@mkdir -p assets

@@ -1,0 +1,664 @@
+import SwiftUI
+import AppKit
+import QuickLookUI
+import FileMasterCore
+import FileMasterAI
+
+struct ActionsMenuButton: NSViewRepresentable {
+    var title: String? = nil
+    let urls: () -> [URL]
+    let onShare: (NSView) -> Void
+    let onRemove: ([URL]) -> Void
+    /// Called when "Expand into Den" is chosen, with the selected directories and
+    /// whether the expansion should recurse into sub-folders.
+    var onExpand: (([URL], Bool) -> Void)? = nil
+    /// Called when "Ask AI…" is chosen, so the owning den can open Ask inline.
+    var onAsk: (([URL]) -> Void)? = nil
+    /// Called when "Edit Image…" is chosen, so the owning den can open the editor inline.
+    var onEdit: (([URL]) -> Void)? = nil
+    /// Called when "Quick Look" is chosen, so the owning den can open the embedded
+    /// preview inline. Falls back to the system Quick Look panel when nil.
+    var onPreview: (([URL]) -> Void)? = nil
+
+    func makeNSView(context: Context) -> NSButton {
+        let b = NSButton()
+        b.isBordered = false
+        b.target = context.coordinator
+        b.action = #selector(Coordinator.tapped(_:))
+        b.contentTintColor = .secondaryLabelColor
+        if let title {
+            b.title = title
+            b.bezelStyle = .inline
+            b.font = .systemFont(ofSize: 12, weight: .medium)
+            b.cell?.lineBreakMode = .byTruncatingMiddle
+        } else {
+            let cfg = NSImage.SymbolConfiguration(pointSize: 14, weight: .semibold)
+            b.image = NSImage(systemSymbolName: "ellipsis", accessibilityDescription: "Actions")?
+                .withSymbolConfiguration(cfg)
+            b.imagePosition = .imageOnly
+            b.imageScaling = .scaleProportionallyUpOrDown
+            b.bezelStyle = .regularSquare
+            b.isTransparent = false
+            (b.cell as? NSButtonCell)?.imageDimsWhenDisabled = false
+        }
+        return b
+    }
+
+    func updateNSView(_ nsView: NSButton, context: Context) {
+        if let title, nsView.title != title {
+            nsView.title = title
+            nsView.cell?.lineBreakMode = .byTruncatingMiddle
+        }
+        context.coordinator.urls = urls
+        context.coordinator.onShare = onShare
+        context.coordinator.onRemove = onRemove
+        context.coordinator.onExpand = onExpand
+        context.coordinator.onAsk = onAsk
+        context.coordinator.onEdit = onEdit
+        context.coordinator.onPreview = onPreview
+    }
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(urls: urls, onShare: onShare, onRemove: onRemove,
+                    onExpand: onExpand, onAsk: onAsk, onEdit: onEdit,
+                    onPreview: onPreview)
+    }
+
+    final class Coordinator: NSObject {
+        var urls: () -> [URL]
+        var onShare: (NSView) -> Void
+        var onRemove: ([URL]) -> Void
+        var onExpand: (([URL], Bool) -> Void)?
+        var onAsk: (([URL]) -> Void)?
+        var onEdit: (([URL]) -> Void)?
+        var onPreview: (([URL]) -> Void)?
+
+        init(urls: @escaping () -> [URL],
+             onShare: @escaping (NSView) -> Void,
+             onRemove: @escaping ([URL]) -> Void,
+             onExpand: (([URL], Bool) -> Void)? = nil,
+             onAsk: (([URL]) -> Void)? = nil,
+             onEdit: (([URL]) -> Void)? = nil,
+             onPreview: (([URL]) -> Void)? = nil) {
+            self.urls = urls
+            self.onShare = onShare
+            self.onRemove = onRemove
+            self.onExpand = onExpand
+            self.onAsk = onAsk
+            self.onEdit = onEdit
+            self.onPreview = onPreview
+        }
+
+        @objc func tapped(_ sender: NSButton) {
+            let list = urls()
+            guard !list.isEmpty else { return }
+            let menu = FileActions.buildMenu(
+                for: list,
+                host: sender,
+                onShare: onShare,
+                onRemove: onRemove,
+                onExpand: onExpand,
+                onAsk: onAsk,
+                onEdit: onEdit,
+                onPreview: onPreview
+            )
+            menu.popUp(positioning: nil,
+                       at: NSPoint(x: 0, y: sender.bounds.height + 4),
+                       in: sender)
+        }
+    }
+}
+
+enum FileActions {
+    static func buildMenu(
+        for urls: [URL],
+        host: NSView,
+        onShare: @escaping (NSView) -> Void,
+        onRemove: @escaping ([URL]) -> Void,
+        onRemoveFromDen: (([URL]) -> Void)? = nil,
+        onExpand: ((_ directories: [URL], _ recursive: Bool) -> Void)? = nil,
+        onAsk: (([URL]) -> Void)? = nil,
+        onEdit: (([URL]) -> Void)? = nil,
+        onPreview: (([URL]) -> Void)? = nil
+    ) -> NSMenu {
+        let menu = NSMenu()
+        let bridge = ActionBridge(urls: urls, host: host, onShare: onShare,
+                                  onRemove: onRemove, onRemoveFromDen: onRemoveFromDen,
+                                  onExpand: onExpand, onAsk: onAsk, onEdit: onEdit,
+                                  onPreview: onPreview)
+        objc_setAssociatedObject(menu, &ActionBridge.assocKey, bridge, .OBJC_ASSOCIATION_RETAIN)
+
+        let hasDir = urls.contains { isDirectory($0) }
+        let allImages = urls.allSatisfy { isImage($0) } && !urls.isEmpty
+        let allPrintable = urls.allSatisfy { isPrintable($0) } && !urls.isEmpty
+        let allArchives = urls.allSatisfy { isArchive($0) } && !urls.isEmpty
+        let allPDFs = urls.allSatisfy { PDFTools.isPDF($0) } && !urls.isEmpty
+        let allVideos = urls.allSatisfy { VideoConvert.isVideo($0) } && !urls.isEmpty
+        // Offer Ask whenever the feature is enabled and the selection contains at
+        // least one searchable file (the action filters to the supported subset).
+        let anyAskable = FileMasterSettings.shared.aiEnabled && urls.contains { TextExtractor.canExtract($0) }
+
+        if anyAskable {
+            menu.addItem(item("Ask AI…", "sparkles",
+                              #selector(ActionBridge.askAI), bridge))
+            menu.addItem(.separator())
+        }
+
+        menu.addItem(item("Open", "arrow.up.forward.app",
+                          #selector(ActionBridge.openItems), bridge))
+        menu.addItem(item("Quick Look", "eye",
+                          #selector(ActionBridge.quickLook), bridge))
+        menu.addItem(item("Reveal in Finder", "folder",
+                          #selector(ActionBridge.reveal), bridge))
+
+        menu.addItem(.separator())
+
+        menu.addItem(item("Copy", "doc.on.doc",
+                          #selector(ActionBridge.copyItems), bridge))
+        menu.addItem(item("Duplicate", "plus.square.on.square",
+                          #selector(ActionBridge.duplicate), bridge))
+        menu.addItem(item("Copy Path", "link",
+                          #selector(ActionBridge.copyPath), bridge))
+
+        menu.addItem(.separator())
+
+        if hasDir || urls.count > 1 {
+            menu.addItem(item("Compress to ZIP", "archivebox",
+                              #selector(ActionBridge.zip), bridge))
+        }
+        if allArchives {
+            menu.addItem(item("Unarchive", "archivebox.fill",
+                              #selector(ActionBridge.unarchive), bridge))
+        }
+        if allPrintable {
+            menu.addItem(item("Print", "printer",
+                              #selector(ActionBridge.printItems), bridge))
+        }
+        if allImages {
+            menu.addItem(imageToolsMenu(bridge: bridge, urls: urls))
+        }
+        if allPDFs {
+            menu.addItem(pdfToolsMenu(bridge: bridge, count: urls.count))
+        }
+        if allVideos {
+            menu.addItem(convertVideoMenu(bridge: bridge, urls: urls))
+        }
+
+        menu.addItem(.separator())
+
+        menu.addItem(item("Share…", "square.and.arrow.up",
+                          #selector(ActionBridge.share), bridge))
+
+        menu.addItem(.separator())
+
+        // Replace a folder tile with its contents. Only meaningful for
+        // directories, and only when the owning den can take new items.
+        if hasDir, onExpand != nil {
+            menu.addItem(item("Expand into Den", "arrow.up.left.and.arrow.down.right",
+                              #selector(ActionBridge.expandIntoDen), bridge))
+            menu.addItem(item("Expand into Den Recursively", "square.stack.3d.up",
+                              #selector(ActionBridge.expandIntoDenRecursively), bridge))
+            menu.addItem(.separator())
+        }
+
+        if onRemoveFromDen != nil {
+            menu.addItem(item("Remove from Den", "minus.circle",
+                              #selector(ActionBridge.removeFromDen), bridge))
+        }
+        menu.addItem(item("Move to Trash", "trash",
+                          #selector(ActionBridge.trash), bridge))
+
+        return menu
+    }
+
+    private static func item(_ title: String, _ symbol: String,
+                             _ sel: Selector, _ target: AnyObject) -> NSMenuItem {
+        let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+        i.target = target
+        i.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+        return i
+    }
+
+    /// "PDF Tools" submenu. Merge needs at least two documents; the rest apply
+    /// to any selection of PDFs. Results are staged into a new den.
+    private static func pdfToolsMenu(bridge: ActionBridge, count: Int) -> NSMenuItem {
+        let sub = NSMenu()
+        if count >= 2 {
+            sub.addItem(item("Merge PDFs", "square.stack.3d.up",
+                             #selector(ActionBridge.mergePDF), bridge))
+        }
+        sub.addItem(item("Split into Pages", "rectangle.split.3x1",
+                         #selector(ActionBridge.splitPDF), bridge))
+        sub.addItem(item("Export Pages as Images", "photo.stack",
+                         #selector(ActionBridge.exportPDFImages), bridge))
+        sub.addItem(item("Extract Images", "photo.badge.arrow.down",
+                         #selector(ActionBridge.extractPDFImages), bridge))
+        sub.addItem(item("Extract Text", "doc.plaintext",
+                         #selector(ActionBridge.extractPDFText), bridge))
+        sub.addItem(.separator())
+        sub.addItem(convertToDocumentMenu(bridge: bridge))
+
+        let parent = NSMenuItem(title: "PDF Tools", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "doc.richtext", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Image" submenu — gathers every image-only action under one roof so the
+    /// top-level menu stays short. Top items act directly; the conversion groups
+    /// stay as their own nested submenus.
+    private static func imageToolsMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem {
+        let sub = NSMenu()
+        if urls.count == 1, bridge.onEdit != nil {
+            sub.addItem(item("Edit Image…", "wand.and.stars",
+                             #selector(ActionBridge.editImage), bridge))
+            sub.addItem(.separator())
+        }
+        sub.addItem(item("Set as Wallpaper", "photo.on.rectangle",
+                         #selector(ActionBridge.wallpaper), bridge))
+        sub.addItem(item(urls.count > 1 ? "Combine to PDF" : "Convert to PDF", "doc.badge.plus",
+                         #selector(ActionBridge.combinePDF), bridge))
+        sub.addItem(item("Sketch to 3D Design…", "cube",
+                         #selector(ActionBridge.sketchTo3D), bridge))
+        sub.addItem(.separator())
+        sub.addItem(convertToDocumentMenu(bridge: bridge))
+        if let convert = convertImageMenu(bridge: bridge, urls: urls) {
+            sub.addItem(convert)
+        }
+        sub.addItem(item("Resize…", "arrow.up.left.and.arrow.down.right",
+                         #selector(ActionBridge.resizeImage), bridge))
+        sub.addItem(item("Compress Image…", "arrow.down.right.and.arrow.up.left",
+                         #selector(ActionBridge.compressImage), bridge))
+
+        let parent = NSMenuItem(title: "Image", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "photo", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Convert to Document" submenu — Searchable keeps the scan and adds an
+    /// invisible text layer; Searchable (Cleaned) also deskews/whitens/sharpens;
+    /// Precise preserves spatial layout and rotation; Formatted reflows
+    /// everything into clean body text.
+    private static func convertToDocumentMenu(bridge: ActionBridge) -> NSMenuItem {
+        let sub = NSMenu()
+        sub.addItem(item("Searchable", "doc.text.magnifyingglass",
+                         #selector(ActionBridge.digitizeSearchable), bridge))
+        sub.addItem(item("Searchable (Cleaned)", "wand.and.stars",
+                         #selector(ActionBridge.digitizeSearchableClean), bridge))
+        sub.addItem(item("Precise", "scope",
+                         #selector(ActionBridge.digitize), bridge))
+        sub.addItem(item("Formatted", "text.alignleft",
+                         #selector(ActionBridge.digitizeFormatted), bridge))
+        let parent = NSMenuItem(title: "Convert to Document", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "doc.text", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Convert Image" submenu. Visually-lossless format conversion; a target
+    /// every selected file already is — or one this OS can't encode (WebP/AVIF
+    /// vary by version) — gets hidden. Animated GIFs also get a → video item.
+    /// Nil if nothing's left to offer.
+    private static func convertImageMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem? {
+        let targets: [(ImageConvert.Format, Selector)] = [
+            (.jpeg, #selector(ActionBridge.convertToJPEG)),
+            (.heic, #selector(ActionBridge.convertToHEIC)),
+            (.png,  #selector(ActionBridge.convertToPNG)),
+            (.tiff, #selector(ActionBridge.convertToTIFF)),
+            (.webp, #selector(ActionBridge.convertToWebP)),
+            (.avif, #selector(ActionBridge.convertToAVIF)),
+        ]
+        let sub = NSMenu()
+        for (format, selector) in targets
+        where ImageConvert.canEncode(format) && !urls.allSatisfy({ format.matches($0) }) {
+            sub.addItem(item("To \(format.label)", "photo", selector, bridge))
+        }
+        if urls.allSatisfy({ $0.pathExtension.lowercased() == "gif" }) {
+            if !sub.items.isEmpty { sub.addItem(.separator()) }
+            sub.addItem(item("To Video (MP4)", "film", #selector(ActionBridge.convertGIFToVideo), bridge))
+        }
+        guard !sub.items.isEmpty else { return nil }
+
+        let parent = NSMenuItem(title: "Convert Image", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    /// "Convert Video" submenu. → HEVC re-encodes (smaller, visually lossless);
+    /// → MP4/MOV rewrap losslessly when possible. Container targets matching the
+    /// source extension are hidden. Results are staged into a new den.
+    private static func convertVideoMenu(bridge: ActionBridge, urls: [URL]) -> NSMenuItem {
+        let sub = NSMenu()
+        sub.addItem(item("To HEVC (smaller)", "film",
+                         #selector(ActionBridge.convertToHEVC), bridge))
+        if !urls.allSatisfy({ $0.pathExtension.lowercased() == "mp4" }) {
+            sub.addItem(item("To MP4", "film", #selector(ActionBridge.convertToMP4), bridge))
+        }
+        if !urls.allSatisfy({ $0.pathExtension.lowercased() == "mov" }) {
+            sub.addItem(item("To MOV", "film", #selector(ActionBridge.convertToMOV), bridge))
+        }
+        sub.addItem(.separator())
+        sub.addItem(item("To GIF", "photo.stack",
+                         #selector(ActionBridge.convertToGIF), bridge))
+        sub.addItem(item("Poster Frame", "photo",
+                         #selector(ActionBridge.grabPoster), bridge))
+        sub.addItem(.separator())
+        sub.addItem(item("Extract Audio", "music.note",
+                         #selector(ActionBridge.extractAudio), bridge))
+
+        let parent = NSMenuItem(title: "Convert Video", action: nil, keyEquivalent: "")
+        parent.image = NSImage(systemSymbolName: "arrow.triangle.2.circlepath", accessibilityDescription: nil)
+        parent.submenu = sub
+        return parent
+    }
+
+    static func isImage(_ url: URL) -> Bool {
+        ["png", "jpg", "jpeg", "gif", "heic", "tiff", "tif", "bmp", "webp"]
+            .contains(url.pathExtension.lowercased())
+    }
+
+    static func isPrintable(_ url: URL) -> Bool {
+        ["pdf", "png", "jpg", "jpeg", "tiff", "tif", "txt", "rtf"]
+            .contains(url.pathExtension.lowercased())
+    }
+
+    static func isArchive(_ url: URL) -> Bool {
+        ["zip", "tar", "gz", "tgz", "bz2"]
+            .contains(url.pathExtension.lowercased())
+    }
+
+    static func isDirectory(_ url: URL) -> Bool { url.isDirectoryItem }
+}
+
+final class ActionBridge: NSObject {
+    nonisolated(unsafe) static var assocKey: UInt8 = 0
+
+    let urls: [URL]
+    weak var host: NSView?
+    let onShare: (NSView) -> Void
+    let onRemove: ([URL]) -> Void
+    let onRemoveFromDen: (([URL]) -> Void)?
+    let onExpand: (([URL], Bool) -> Void)?
+    let onAsk: (([URL]) -> Void)?
+    let onEdit: (([URL]) -> Void)?
+    let onPreview: (([URL]) -> Void)?
+
+    init(urls: [URL], host: NSView,
+         onShare: @escaping (NSView) -> Void,
+         onRemove: @escaping ([URL]) -> Void,
+         onRemoveFromDen: (([URL]) -> Void)? = nil,
+         onExpand: (([URL], Bool) -> Void)? = nil,
+         onAsk: (([URL]) -> Void)? = nil,
+         onEdit: (([URL]) -> Void)? = nil,
+         onPreview: (([URL]) -> Void)? = nil) {
+        self.urls = urls
+        self.host = host
+        self.onShare = onShare
+        self.onRemove = onRemove
+        self.onRemoveFromDen = onRemoveFromDen
+        self.onExpand = onExpand
+        self.onAsk = onAsk
+        self.onEdit = onEdit
+        self.onPreview = onPreview
+    }
+
+    @objc func editImage() {
+        let images = urls.filter { ImageConvert.isImage($0) }
+        guard let target = images.first else { return }
+        onEdit?([target])
+    }
+
+    @objc func askAI() {
+        let searchable = urls.filter { TextExtractor.canExtract($0) }
+        let target = searchable.isEmpty ? urls : searchable
+        // Prefer opening Ask inline within the owning den; fall back to a
+        // standalone window when there's no den context (e.g. menu-bar paths).
+        if let onAsk {
+            onAsk(target)
+        } else {
+            NotificationCenter.default.post(name: .askAIRequested, object: target)
+        }
+    }
+
+    @objc func openItems() { urls.forEach { NSWorkspace.shared.open($0) } }
+
+    @objc func reveal() { NSWorkspace.shared.activateFileViewerSelecting(urls) }
+
+    @objc func quickLook() {
+        // Embedded preview inside the den when the host opted in (the file list
+        // doubles as preview tabs); otherwise hand off to the system QL panel.
+        if let onPreview {
+            onPreview(urls)
+            return
+        }
+        let task = Process()
+        task.launchPath = "/usr/bin/qlmanage"
+        task.arguments = ["-p"] + urls.map(\.path)
+        task.standardOutput = Pipe()
+        task.standardError = Pipe()
+        try? task.run()
+    }
+
+    @objc func copyItems() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.writeObjects(urls.map { $0 as NSURL })
+    }
+
+    @objc func copyPath() {
+        let pb = NSPasteboard.general
+        pb.clearContents()
+        pb.setString(urls.map(\.path).joined(separator: "\n"), forType: .string)
+    }
+
+    @objc func duplicate() {
+        let fm = FileManager.default
+        for url in urls {
+            let base = url.deletingPathExtension().lastPathComponent
+            let ext = url.pathExtension
+            let dir = url.deletingLastPathComponent()
+            var n = 1
+            var dest: URL
+            repeat {
+                let suffix = " copy" + (n == 1 ? "" : " \(n)")
+                let name = ext.isEmpty ? "\(base)\(suffix)" : "\(base)\(suffix).\(ext)"
+                dest = dir.appendingPathComponent(name)
+                n += 1
+            } while fm.fileExists(atPath: dest.path)
+            try? fm.copyItem(at: url, to: dest)
+        }
+    }
+
+    @objc func zip() {
+        let archive = Staging.dir("ZIP")
+            .appendingPathComponent("Archive-\(Int(Date().timeIntervalSince1970)).zip")
+        let paths = urls.map { $0.path.shellEscaped }.joined(separator: " ")
+        let task = Process()
+        task.launchPath = "/bin/sh"
+        task.arguments = ["-c", "zip -rq \(archive.path.shellEscaped) \(paths)"]
+        try? task.run()
+        task.waitUntilExit()
+        if FileManager.default.fileExists(atPath: archive.path) {
+            NSWorkspace.shared.activateFileViewerSelecting([archive])
+        }
+    }
+
+    @objc func unarchive() {
+        for url in urls {
+            let dest = url.deletingPathExtension()
+            try? FileManager.default.createDirectory(at: dest, withIntermediateDirectories: true)
+            let task = Process()
+            task.launchPath = "/usr/bin/unzip"
+            task.arguments = ["-oq", url.path, "-d", dest.path]
+            try? task.run()
+            task.waitUntilExit()
+        }
+    }
+
+    @objc func printItems() {
+        let task = Process()
+        task.launchPath = "/usr/bin/lpr"
+        task.arguments = urls.map(\.path)
+        try? task.run()
+    }
+
+    @objc func wallpaper() {
+        guard let url = urls.first else { return }
+        for screen in NSScreen.screens {
+            try? NSWorkspace.shared.setDesktopImageURL(url, for: screen, options: [:])
+        }
+    }
+
+    @objc func share() {
+        guard let host else { return }
+        onShare(host)
+    }
+
+    @objc func removeFromDen() {
+        onRemoveFromDen?(urls)
+    }
+
+    @objc func expandIntoDen() { expand(recursive: false) }
+
+    @objc func expandIntoDenRecursively() { expand(recursive: true) }
+
+    private func expand(recursive: Bool) {
+        let dirs = urls.filter { FileActions.isDirectory($0) }
+        guard !dirs.isEmpty else { return }
+        onExpand?(dirs, recursive)
+    }
+
+    @objc func trash() {
+        var removed: [URL] = []
+        for url in urls {
+            if (try? FileManager.default.trashItem(at: url, resultingItemURL: nil)) != nil {
+                removed.append(url)
+            }
+        }
+        if !removed.isEmpty {
+            DispatchQueue.main.async { [onRemove] in onRemove(removed) }
+        }
+    }
+
+    // MARK: - PDF tools
+
+    @objc func mergePDF()        { runStaged("Merging PDFs", batch: PDFTools.merge) }
+    @objc func splitPDF()        { runStaged("Splitting PDF") { url, _ in PDFTools.splitPages([url]) } }
+    @objc func exportPDFImages() { runStaged("Exporting pages") { url, _ in PDFTools.exportPageImages([url]) } }
+    @objc func extractPDFImages(){ runStaged("Extracting images") { url, _ in PDFTools.extractImages([url]) } }
+    @objc func extractPDFText()  { runStaged("Extracting text") { url, _ in PDFTools.extractText([url]) } }
+    @objc func digitizeSearchable()      { runStaged("Making searchable") { url, progress in PDFTools.digitizeSearchable([url], cleanup: .none, progress: progress) } }
+    @objc func digitizeSearchableClean() { runStaged("Cleaning & OCR")    { url, progress in PDFTools.digitizeSearchable([url], cleanup: .enhance, progress: progress) } }
+    @objc func digitize()          { runStaged("Converting (precise)") { url, progress in PDFTools.digitize([url], progress: progress) } }
+    @objc func digitizeFormatted() { runStaged("Formatting document")  { url, progress in PDFTools.digitizeFormatted([url], progress: progress) } }
+    @objc func combinePDF()      { runStaged("Creating PDF", batch: PDFTools.combineToPDF) }
+    @objc func sketchTo3D()     { runStaged("Rendering 3D design") { url, progress in SketchRenderer.render([url], progress: progress) } }
+
+    // MARK: - Image conversion
+
+    @objc func convertToJPEG() { runStaged("Converting to JPEG") { url, _ in ImageConvert.convert([url], to: .jpeg) } }
+    @objc func convertToHEIC() { runStaged("Converting to HEIC") { url, _ in ImageConvert.convert([url], to: .heic) } }
+    @objc func convertToPNG()  { runStaged("Converting to PNG")  { url, _ in ImageConvert.convert([url], to: .png) } }
+    @objc func convertToTIFF() { runStaged("Converting to TIFF") { url, _ in ImageConvert.convert([url], to: .tiff) } }
+    @objc func convertToWebP() { runStaged("Converting to WebP") { url, _ in ImageConvert.convert([url], to: .webp) } }
+    @objc func convertToAVIF() { runStaged("Converting to AVIF") { url, _ in ImageConvert.convert([url], to: .avif) } }
+    @objc func convertGIFToVideo() { runStaged("GIF → video") { url, progress in VideoConvert.gifToVideo(url, progress: progress) } }
+
+    @objc func compressImage() {
+        guard let host else { return }
+        let inputs = urls
+        // The menu (and this bridge) are gone by the time the user commits, so the
+        // panel's callbacks stage statically rather than through `self`.
+        MainActor.assumeIsolated {
+            ActionPopover.shared.present(from: host) {
+                ImageCompressPanel(
+                    urls: inputs,
+                    onCompress: { opts in
+                        ActionPopover.shared.dismiss()
+                        ActionBridge.stage("Compressing", inputs: inputs) { url, _ in
+                            ImageCompress.process([url], options: opts)
+                        }
+                    },
+                    onCancel: { ActionPopover.shared.dismiss() })
+            }
+        }
+    }
+
+    @objc func resizeImage() {
+        guard let host else { return }
+        let inputs = urls
+        MainActor.assumeIsolated {
+            ActionPopover.shared.present(from: host) {
+                ImageResizePanel(
+                    urls: inputs,
+                    onResize: { mode in
+                        ActionPopover.shared.dismiss()
+                        ActionBridge.stage("Resizing", inputs: inputs) { url, _ in
+                            ImageResize.process([url], mode: mode)
+                        }
+                    },
+                    onCancel: { ActionPopover.shared.dismiss() })
+            }
+        }
+    }
+
+    // MARK: - Video conversion
+
+    @objc func convertToHEVC() { runStaged("Converting to HEVC") { url, progress in VideoConvert.toHEVC(url, progress: progress) } }
+    @objc func convertToMP4()  { runStaged("Converting to MP4")  { url, progress in VideoConvert.toMP4(url, progress: progress) } }
+    @objc func convertToMOV()  { runStaged("Converting to MOV")  { url, progress in VideoConvert.toMOV(url, progress: progress) } }
+    @objc func extractAudio()  { runStaged("Extracting audio")   { url, progress in VideoConvert.extractAudio(url, progress: progress) } }
+    @objc func convertToGIF()  { runStaged("Converting to GIF")  { url, progress in VideoConvert.toGIF(url, progress: progress) } }
+    @objc func grabPoster()    { runStaged("Grabbing poster")    { url, progress in VideoConvert.posterFrame(url, progress: progress) } }
+
+    /// Run a per-file operation off the main thread, showing a progress HUD and
+    /// staging the combined output into a fresh den. `perFile` reports 0…1
+    /// progress for the current file; overall progress blends it across the
+    /// batch. Beeps if nothing was produced.
+    private func runStaged(_ label: String,
+                           perFile: @escaping (URL, @escaping (Double) -> Void) -> [URL]) {
+        ActionBridge.stage(label, inputs: urls, perFile: perFile)
+    }
+
+    /// Instance-free variant of `runStaged`, for actions whose UI (e.g. the
+    /// compression popover) outlives the menu that owns the bridge.
+    static func stage(_ label: String, inputs: [URL],
+                      perFile: @escaping (URL, @escaping (Double) -> Void) -> [URL]) {
+        let hud = MainActor.assumeIsolated { ProgressHUD(label: label) }
+        DispatchQueue.global(qos: .userInitiated).async {
+            var outputs: [URL] = []
+            let total = Double(inputs.count)
+            for (i, url) in inputs.enumerated() {
+                outputs += perFile(url) { sub in
+                    Task { @MainActor in hud.update((Double(i) + sub) / total) }
+                }
+                Task { @MainActor in hud.update(Double(i + 1) / total) }
+            }
+            let result = outputs
+            Task { @MainActor in
+                hud.finish()
+                if result.isEmpty { NSSound.beep() }
+                else { DenManager.shared.openDen(with: result) }
+            }
+        }
+    }
+
+    /// Variant for whole-batch operations (merge, combine) where per-file
+    /// progress isn't meaningful; shows an indeterminate HUD.
+    private func runStaged(_ label: String, batch: @escaping ([URL]) -> [URL]) {
+        let inputs = urls
+        let hud = MainActor.assumeIsolated { () -> ProgressHUD in
+            let h = ProgressHUD(label: label); h.indeterminate(); return h
+        }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let result = batch(inputs)
+            Task { @MainActor in
+                hud.finish()
+                if result.isEmpty { NSSound.beep() }
+                else { DenManager.shared.openDen(with: result) }
+            }
+        }
+    }
+}
