@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>com.apple.application-identifier</key>
+	<string>8248296AJX.ltd.anti.filemaster</string>
+	<key>com.apple.developer.team-identifier</key>
+	<string>8248296AJX</string>
+	<key>com.apple.security.app-sandbox</key>
+	<true/>
+	<!-- User-selected files: the entire app is "drag a file in, drag it out,
+	     run an action on it". Read+write because actions like Compress to ZIP,
+	     Unarchive, Convert Image/Video, and PDF Tools write derived outputs
+	     into a staging dir that the user then drags wherever they want. -->
+	<key>com.apple.security.files.user-selected.read-write</key>
+	<true/>
+	<!-- Bookmarks for the recents list so closed dens can re-open their
+	     contents across launches without a fresh open-panel grant. -->
+	<key>com.apple.security.files.bookmarks.app-scope</key>
+	<true/>
+	<!-- Outgoing HTTPS for two reasons, both user-initiated:
+	       1. The manual "Check for updates" button in About — a single GET to
+	          https://anti.ltd/api/version?app=filemaster on tap.
+	       2. The Ask "BYO LLM" providers (OpenAI / Ollama / llama.cpp) the
+	          user can opt into in Settings → AI when they don't want to use
+	          Apple Intelligence. Apple Intelligence (the default) runs entirely
+	          on-device and never touches the network.
+	     No background polling, no telemetry, no identifiers in either path. -->
+	<key>com.apple.security.network.client</key>
+	<true/>
+</dict>
+</plist>

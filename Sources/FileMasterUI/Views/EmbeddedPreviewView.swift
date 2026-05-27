@@ -138,8 +138,13 @@ private struct ShareHostingButton: NSViewRepresentable {
         b.isBordered = false
         b.bezelStyle = .regularSquare
         b.imagePosition = .imageOnly
+        b.imageScaling = .scaleProportionallyDown
         b.toolTip = help
-        let cfg = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
+        // `square.and.arrow.up` is visually taller than the sibling glyphs (the
+        // arrow sits above the square), so we shave the symbol a touch and let
+        // `scaleProportionallyDown` keep it inside the 28pt cell — otherwise it
+        // renders noticeably larger than the SwiftUI icon buttons next to it.
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .medium)
         b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: help)?
             .withSymbolConfiguration(cfg)
         b.contentTintColor = .secondaryLabelColor

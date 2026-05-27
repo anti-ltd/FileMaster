@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "anti-ltd",
+      "cwd": "/Users/x/Projects/anti-ltd",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev"],
+      "port": 4200
+    }
+  ]
+}

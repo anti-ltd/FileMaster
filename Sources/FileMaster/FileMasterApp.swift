@@ -2,9 +2,24 @@ import SwiftUI
 import AppKit
 import FileMasterUI
 
+// Dev tool: `--icon <dir>` renders the AppIcon.iconset folder, then exits.
+// The handler runs before `App` body composition by intercepting argv on the
+// AppDelegate's `applicationDidFinishLaunching`. See FileMasterUI/AppDelegate.
 @main
 struct FileMasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
+
+    init() {
+        // Run the icon renderer synchronously *before* SwiftUI's App lifecycle
+        // touches anything. This matches Clonk's pattern but moves the check
+        // out of AppDelegate so it works without an event loop, which keeps
+        // `make icon` fast and headless.
+        let args = CommandLine.arguments
+        if let idx = args.firstIndex(of: "--icon"), idx + 1 < args.count {
+            AppIconRenderer.run(directory: args[idx + 1])
+            exit(0)
+        }
+    }
 
     var body: some Scene {
         // The pop-out settings window. The popover's macwindow button opens

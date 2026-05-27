@@ -2,12 +2,14 @@
 import PackageDescription
 import Foundation
 
-// Tests are kept local-only (Tests/ is gitignored), so include the test target
-// only when it's actually present — a fresh clone without it still builds.
-let testsPath = URL(fileURLWithPath: #filePath)
-    .deletingLastPathComponent()
-    .appendingPathComponent("Tests/FileMasterAITests")
-let hasTests = FileManager.default.fileExists(atPath: testsPath.path)
+// Tests are kept local-only (Tests/ is gitignored), so include each test
+// target only when it's actually present — a fresh clone without them still
+// builds.
+let repoRoot = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+let hasAITests   = FileManager.default.fileExists(
+    atPath: repoRoot.appendingPathComponent("Tests/FileMasterAITests").path)
+let hasCoreTests = FileManager.default.fileExists(
+    atPath: repoRoot.appendingPathComponent("Tests/FileMasterCoreTests").path)
 
 var targets: [Target] = [
         .target(
@@ -63,12 +65,22 @@ var targets: [Target] = [
         ),
 ]
 
-if hasTests {
+if hasAITests {
     targets.append(
         .testTarget(
             name: "FileMasterAITests",
             dependencies: ["FileMasterAI"],
             path: "Tests/FileMasterAITests"
+        )
+    )
+}
+
+if hasCoreTests {
+    targets.append(
+        .testTarget(
+            name: "FileMasterCoreTests",
+            dependencies: ["FileMasterCore"],
+            path: "Tests/FileMasterCoreTests"
         )
     )
 }

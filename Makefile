@@ -3,9 +3,14 @@ BUNDLE_ID      := ltd.anti.filemaster
 CONFIG         := release
 BUILD_DIR      := build
 APP_BUNDLE     := $(BUILD_DIR)/$(APP_NAME).app
+DMG            := $(BUILD_DIR)/$(APP_NAME).dmg
 EXEC_NAME      := $(APP_NAME)
 INFO_PLIST     := Resources/Info.plist
 ENTITLEMENTS   := Resources/FileMaster.entitlements
+MAS_ENTITLEMENTS := Resources/FileMaster.mas.entitlements
+MAS_PKG        := $(BUILD_DIR)/$(APP_NAME).pkg
+MAS_PROFILE    ?= Resources/FileMaster_MAS.provisionprofile
+PRIVACY        := Resources/PrivacyInfo.xcprivacy
 ICONSET        := $(BUILD_DIR)/AppIcon.iconset
 ICNS           := Resources/AppIcon.icns
 
@@ -19,6 +24,21 @@ STRIP          := strip
 # Certificate Assistant → Create a Certificate → type "Code Signing".
 SIGN_ID        := $(shell security find-certificate -c "FileMaster Dev" >/dev/null 2>&1 && echo "FileMaster Dev" || echo -)
 
+# MAS signing identities — find via: security find-identity -v -p codesigning
+MAS_SIGN_APP   ?= 3rd Party Mac Developer Application: William Whitehouse (8248296AJX)
+MAS_SIGN_PKG   ?= 3rd Party Mac Developer Installer: William Whitehouse (8248296AJX)
+
+# Developer ID identity for direct-distribution (website / DMG) builds. This
+# is different from the MAS identity above — Gatekeeper requires Developer ID
+# Application signing + notarization for download-and-run binaries.
+DEVID_SIGN_APP ?= Developer ID Application: William Whitehouse (8248296AJX)
+
+# App Store Connect API key for notarytool. The .p8 lives outside the repo;
+# memory: KZ765P9ZHP / issuer 66eec4bc-6987-480b-9af2-c26ea01d2ed2.
+NOTARY_KEY_ID  ?= KZ765P9ZHP
+NOTARY_ISSUER  ?= 66eec4bc-6987-480b-9af2-c26ea01d2ed2
+NOTARY_KEY     ?= $(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID).p8
+
 # Size-optimised release flags:
 #   -Osize         optimise for binary size over speed
 #   -wmo           whole-module optimisation (better dead-code elimination)
@@ -27,45 +47,65 @@ RELEASE_FLAGS  := -Xswiftc -Osize -Xswiftc -wmo -Xlinker -dead_strip
 
 BIN_PATH       = $(shell $(SWIFT) build -c $(CONFIG) --show-bin-path)
 
+# app-arently lives as a sibling checkout; used by `make screenshot`.
 APPBIN ?= ../app-arently/.build/release/app-arently
 
-.PHONY: all build bundle run debug stop clean format help icon release screenshot
+.PHONY: all build bundle run debug stop clean format help icon release \
+        bundle-app version bump test dmg build-mas dist dist-manifest screenshot reset
 
 all: build
 
 help:
 	@echo "Targets:"
-	@echo "  make build    — swift build -c release"
-	@echo "  make bundle   — assemble FileMaster.app under build/"
-	@echo "  make run      — bundle + relaunch app"
-	@echo "  make release  — size-optimised bundle, stripped + signed (FileMaster Dev cert if present, else ad-hoc)"
-	@echo "  make debug    — debug build + run in foreground"
-	@echo "  make stop     — kill running FileMaster"
-	@echo "  make clean    — swift package clean + remove build/"
-	@echo "  make icon     — render AppIcon.icns from AppIconRenderer"
+	@echo "  make build      — swift build -c release"
+	@echo "  make bundle     — assemble FileMaster.app under build/"
+	@echo "  make run        — bundle + relaunch app"
+	@echo "  make release    — size-optimised bundle, stripped + signed (FileMaster Dev cert if present, else ad-hoc)"
+	@echo "  make debug      — debug build + run in foreground"
+	@echo "  make stop       — kill running FileMaster"
+	@echo "  make clean      — swift package clean + remove build/"
+	@echo "  make icon       — render AppIcon.icns from AppIconRenderer"
+	@echo ""
+	@echo "  make test       — swift test"
+	@echo "  make version    — print FileMaster <short> (<build>)"
+	@echo "  make bump       — increment CFBundleVersion"
+	@echo "  make dmg        — drag-to-install disk image of the local bundle"
+	@echo ""
+	@echo "  make build-mas  — Mac App Store .pkg (bumps build #; pass NO_BUMP=1 to skip)"
+	@echo "  make dist       — Developer ID + hardened-runtime + notarize + staple + DMG + manifest"
 
 build:
 	$(SWIFT) build -c $(CONFIG) --product $(APP_NAME) $(RELEASE_FLAGS)
 
 icon: build
+	@# The renderer is opt-in: when the binary supports --icon we regenerate
+	@# the iconset and recompile $(ICNS). When it doesn't (current FileMaster
+	@# v1 — the .icns is authored offline and committed under Resources/), we
+	@# keep the existing $(ICNS) and just verify it's there.
 	@rm -rf "$(ICONSET)"
-	@"$(BIN_PATH)/$(APP_NAME)" --icon "$(ICONSET)"
-	@if command -v pngquant >/dev/null 2>&1; then \
-		echo "Quantizing icon PNGs..."; \
-		for f in $(ICONSET)/*.png; do \
-			pngquant --quality=90-100 --speed 1 --force --output "$$f" "$$f" || true; \
-		done; \
+	@if "$(BIN_PATH)/$(APP_NAME)" --icon "$(ICONSET)" >/dev/null 2>&1 && [ -d "$(ICONSET)" ]; then \
+		if command -v pngquant >/dev/null 2>&1; then \
+			echo "Quantizing icon PNGs..."; \
+			for f in $(ICONSET)/*.png; do \
+				pngquant --quality=90-100 --speed 1 --force --output "$$f" "$$f" || true; \
+			done; \
+		else \
+			echo "pngquant not found, skipping (brew install pngquant)"; \
+		fi; \
+		if command -v optipng >/dev/null 2>&1; then \
+			echo "Optimizing icon PNGs..."; \
+			optipng -quiet -o7 $(ICONSET)/*.png; \
+		else \
+			echo "optipng not found, skipping (brew install optipng)"; \
+		fi; \
+		iconutil -c icns "$(ICONSET)" -o "$(ICNS)"; \
+		echo "→ $(ICNS) (regenerated)"; \
+	elif [ -f "$(ICNS)" ]; then \
+		echo "→ $(ICNS) (existing — no --icon renderer in binary)"; \
 	else \
-		echo "pngquant not found, skipping (brew install pngquant)"; \
+		echo "✗ $(ICNS) missing and binary has no --icon renderer" >&2; \
+		exit 1; \
 	fi
-	@if command -v optipng >/dev/null 2>&1; then \
-		echo "Optimizing icon PNGs..."; \
-		optipng -quiet -o7 $(ICONSET)/*.png; \
-	else \
-		echo "optipng not found, skipping (brew install optipng)"; \
-	fi
-	@iconutil -c icns "$(ICONSET)" -o "$(ICNS)"
-	@echo "→ $(ICNS)"
 
 bundle: build
 	@rm -rf "$(APP_BUNDLE)"
@@ -107,10 +147,152 @@ reset:
 	@rm -rf "$$HOME/Library/Application Support/counter-ltd/filemaster"
 	@echo "→ wiped ~/Library/Application Support/counter-ltd/filemaster"
 
+# ──────────────────────────────────────────────────────────────────────────
+# Versioning & DMG
+
+# Print the current marketing + build version.
+version:
+	@SHORT=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" $(INFO_PLIST)); \
+	BUILD=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $(INFO_PLIST)); \
+	echo "$(APP_NAME) $$SHORT ($$BUILD)"
+
+# Increment CFBundleVersion by 1. App Store Connect rejects duplicate build
+# numbers under the same marketing version, so build-mas calls this first to
+# guarantee each submission is fresh.
+bump:
+	@CURRENT=$$(/usr/libexec/PlistBuddy -c "Print :CFBundleVersion" $(INFO_PLIST)); \
+	NEXT=$$(( CURRENT + 1 )); \
+	/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $$NEXT" $(INFO_PLIST); \
+	echo "CFBundleVersion: $$CURRENT -> $$NEXT"
+
+test:
+	$(SWIFT) test
+
+# Drag-to-install disk image of the *local* bundle (FileMaster Dev or ad-hoc
+# signed). Useful for testing the install layout — not for distribution.
+dmg: bundle
+	@rm -rf build/dmg "$(DMG)"
+	@mkdir -p build/dmg
+	@cp -R "$(APP_BUNDLE)" build/dmg/
+	@ln -s /Applications build/dmg/Applications
+	@hdiutil create -volname "$(APP_NAME)" -srcfolder build/dmg -ov -format UDZO "$(DMG)" >/dev/null
+	@rm -rf build/dmg
+	@echo "→ $(DMG)"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Mac App Store distribution package.
+#
+# Requires "3rd Party Mac Developer Application" and "3rd Party Mac Developer
+# Installer" certificates from your Apple Developer account. Override the
+# signing identities via MAS_SIGN_APP and MAS_SIGN_PKG.
+# Bumps CFBundleVersion automatically; pass NO_BUMP=1 to skip.
+build-mas: icon
+	@if [ -z "$(NO_BUMP)" ]; then $(MAKE) --no-print-directory bump; fi
+	@rm -rf "$(APP_BUNDLE)" "$(MAS_PKG)"
+	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
+	@cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
+	@$(STRIP) -x "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" 2>/dev/null || true
+	@cp "$(INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	@cp "$(ICNS)" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"
+	@cp "$(PRIVACY)" "$(APP_BUNDLE)/Contents/Resources/PrivacyInfo.xcprivacy"
+	@if [ -f "$(MAS_PROFILE)" ]; then cp "$(MAS_PROFILE)" "$(APP_BUNDLE)/Contents/embedded.provisionprofile"; \
+		else echo "⚠ $(MAS_PROFILE) missing — App Store submission will be rejected without it"; fi
+	@xattr -cr "$(APP_BUNDLE)"
+	$(CODESIGN) --force --deep \
+		--sign "$(MAS_SIGN_APP)" \
+		--identifier $(BUNDLE_ID) \
+		--entitlements "$(MAS_ENTITLEMENTS)" \
+		--options runtime \
+		"$(APP_BUNDLE)"
+	productbuild \
+		--component "$(APP_BUNDLE)" /Applications \
+		--sign "$(MAS_SIGN_PKG)" \
+		"$(MAS_PKG)"
+	@echo "→ $(MAS_PKG)"
+	@echo "Upload: xcrun altool --upload-package $(MAS_PKG) --type osx \\"
+	@echo "          --apiKey $(NOTARY_KEY_ID) --apiIssuer $(NOTARY_ISSUER)"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Direct-distribution (website / DMG) build.
+#
+# Builds a Developer ID-signed, hardened-runtime, notarized, stapled DMG
+# ready to upload to R2 for paid customers. This is the *non-MAS* path:
+# Gatekeeper requires Developer ID + notarization for download-and-run apps,
+# distinct from the MAS pipeline above which uses 3rd Party Mac Developer.
+#
+# Outputs:
+#   build/FileMaster-<version>.dmg   — notarized + stapled, customer-facing
+#   build/FileMaster-<version>.json  — manifest for binaries/filemaster.json
+#
+# The FileMaster Dev local-signing convenience does NOT apply here —
+# Developer ID is the only identity macOS will trust outside the App Store.
+DIST_VERSION := $(shell /usr/libexec/PlistBuddy -c "Print :CFBundleShortVersionString" $(INFO_PLIST))
+DIST_DMG     = $(BUILD_DIR)/$(APP_NAME)-$(DIST_VERSION).dmg
+DIST_JSON    = $(BUILD_DIR)/$(APP_NAME)-$(DIST_VERSION).json
+
+dist: icon
+	@echo "── Direct-distribution build: $(APP_NAME) $(DIST_VERSION) ──"
+	rm -rf "$(APP_BUNDLE)" "$(DIST_DMG)" "$(DIST_JSON)"
+	mkdir -p "$(APP_BUNDLE)/Contents/MacOS" "$(APP_BUNDLE)/Contents/Resources"
+	cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
+	$(STRIP) -x "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" 2>/dev/null || true
+	cp "$(INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	cp "$(ICNS)" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"
+	cp "$(PRIVACY)" "$(APP_BUNDLE)/Contents/Resources/PrivacyInfo.xcprivacy"
+	xattr -cr "$(APP_BUNDLE)"
+	@echo "── Signing with Developer ID + hardened runtime ──"
+	codesign --force --deep --timestamp \
+		--sign "$(DEVID_SIGN_APP)" \
+		--options runtime \
+		--entitlements "$(ENTITLEMENTS)" \
+		"$(APP_BUNDLE)"
+	codesign --verify --strict --deep --verbose=2 "$(APP_BUNDLE)"
+	@echo "── Building DMG ──"
+	rm -rf build/dmg
+	mkdir -p build/dmg
+	cp -R "$(APP_BUNDLE)" build/dmg/
+	ln -s /Applications build/dmg/Applications
+	hdiutil create -volname "$(APP_NAME)" -srcfolder build/dmg -ov -format UDZO "$(DIST_DMG)"
+	rm -rf build/dmg
+	@echo "── Submitting to Apple notary service (may take a few minutes) ──"
+	xcrun notarytool submit "$(DIST_DMG)" \
+		--key "$(NOTARY_KEY)" \
+		--key-id "$(NOTARY_KEY_ID)" \
+		--issuer "$(NOTARY_ISSUER)" \
+		--wait
+	@echo "── Stapling notarization ticket ──"
+	xcrun stapler staple "$(DIST_DMG)"
+	xcrun stapler validate "$(DIST_DMG)"
+	@echo "── Writing version manifest ──"
+	$(MAKE) --no-print-directory dist-manifest
+	@echo ""
+	@echo "✓ Built $(DIST_DMG)"
+	@echo "✓ Manifest $(DIST_JSON)"
+	@echo ""
+	@echo "Upload to anti-ltd-binaries:"
+	@echo "  wrangler r2 object put anti-ltd-binaries/binaries/filemaster.dmg  --file $(DIST_DMG) --remote"
+	@echo "  wrangler r2 object put anti-ltd-binaries/binaries/filemaster.json --file $(DIST_JSON) --content-type application/json --remote"
+
+# Emits binaries/filemaster.json. Shape per anti-ltd/src/worker/versions.js:
+# version + optional metadata; the Worker adds `app` and `downloadUrl` at
+# response time.
+dist-manifest:
+	@SIZE=$$(stat -f %z "$(DIST_DMG)"); \
+	SHA=$$(shasum -a 256 "$(DIST_DMG)" | awk '{print $$1}'); \
+	RELEASED=$$(date -u +"%Y-%m-%dT%H:%M:%SZ"); \
+	MIN_OS=$$(/usr/libexec/PlistBuddy -c "Print :LSMinimumSystemVersion" $(INFO_PLIST)); \
+	NOTES=$${FILEMASTER_RELEASE_NOTES:-"Initial release."}; \
+	printf '{\n  "version": "%s",\n  "releasedAt": "%s",\n  "notes": "%s",\n  "minOS": "macOS %s",\n  "sha256": "%s",\n  "size": %d\n}\n' \
+		"$(DIST_VERSION)" "$$RELEASED" "$$NOTES" "$$MIN_OS" "$$SHA" "$$SIZE" \
+		> "$(DIST_JSON)"
+	@echo "  version  $(DIST_VERSION)"
+	@echo "  sha256   $$(shasum -a 256 "$(DIST_DMG)" | awk '{print $$1}')"
+	@echo "  size     $$(stat -f %z "$(DIST_DMG)") bytes"
+
+# Resource-profile benchmark via app-arently (matches Clonk).
 screenshot: bundle
-	@mkdir -p assets
-	$(APPBIN) profile --app "$(APP_BUNDLE)" --out assets/benchmark.png
-	@echo "Screenshot: assets/benchmark.png"
+	$(APPBIN) profile --app "$(APP_BUNDLE)" --out Resources/benchmark.png
+	@echo "Screenshot: Resources/benchmark.png"
 
 clean:
 	$(SWIFT) package clean

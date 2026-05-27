@@ -384,6 +384,12 @@ struct SettingsTabContent: View {
 
             Divider()
 
+            // Manual update check — same flow Clonk uses. Tapping the button is
+            // the *only* trigger; nothing polls in the background.
+            UpdatesRow(currentVersion: version)
+
+            Divider()
+
             // Permissions live under About — same place Clonk surfaces them.
             // They're rarely-touched grant flows, not day-to-day settings.
             permissionSection(
@@ -535,6 +541,92 @@ public enum SettingsTab: String, CaseIterable, Identifiable, iUX_MacOS.SettingsT
         case .settings:     return "gearshape"
         case .intelligence: return "sparkles"
         case .about:        return "info.circle"
+        }
+    }
+}
+
+// MARK: - Updates row
+
+/// Owns its own state for the manual update check, matching Clonk's About tab.
+/// No background polling; nothing fires until the user taps "Check for updates".
+private struct UpdatesRow: View {
+    let currentVersion: String
+    @State private var checkState: UpdateCheckState = .idle
+
+    private enum UpdateCheckState: Equatable {
+        case idle
+        case checking
+        case upToDate(latest: String)
+        case updateAvailable(VersionInfo)
+        case failed(String)
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                Button(action: runCheck) {
+                    if case .checking = checkState {
+                        HStack(spacing: 6) {
+                            ProgressView().controlSize(.small)
+                            Text("Checking…")
+                        }
+                    } else {
+                        Text("Check for updates")
+                    }
+                }
+                .disabled(checkState == .checking)
+                Spacer()
+            }
+            statusView
+        }
+    }
+
+    @ViewBuilder
+    private var statusView: some View {
+        switch checkState {
+        case .idle, .checking:
+            EmptyView()
+        case .upToDate(let latest):
+            Label("Up to date (\(latest))", systemImage: "checkmark.circle.fill")
+                .foregroundStyle(.green)
+                .font(.system(size: 12))
+        case .updateAvailable(let info):
+            VStack(alignment: .leading, spacing: 4) {
+                Label("Update available: \(info.version)", systemImage: "arrow.down.circle.fill")
+                    .foregroundStyle(.tint)
+                    .font(.system(size: 12))
+                if let notes = info.notes, !notes.isEmpty {
+                    Text(notes)
+                        .font(.system(size: 11))
+                        .foregroundStyle(.secondary)
+                        .fixedSize(horizontal: false, vertical: true)
+                }
+                if let url = info.resolvedDownloadURL() {
+                    Button("Download…") { NSWorkspace.shared.open(url) }
+                        .padding(.top, 2)
+                }
+            }
+        case .failed(let message):
+            Label("Check failed: \(message)", systemImage: "exclamationmark.triangle.fill")
+                .foregroundStyle(.orange)
+                .font(.system(size: 11))
+        }
+    }
+
+    private func runCheck() {
+        checkState = .checking
+        let local = currentVersion
+        Task { @MainActor in
+            do {
+                let info = try await UpdateChecker.fetch()
+                if UpdateChecker.isNewer(info.version, than: local) {
+                    checkState = .updateAvailable(info)
+                } else {
+                    checkState = .upToDate(latest: info.version)
+                }
+            } catch {
+                checkState = .failed(error.localizedDescription)
+            }
         }
     }
 }
