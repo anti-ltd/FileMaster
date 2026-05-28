@@ -237,7 +237,7 @@ make reset      # wipe ~/Library/Application Support/counter-ltd/filemaster
 make clean      # remove .build/ and build/
 ```
 
-There are no third-party dependencies — everything is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, Core Image + Metal, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for Ask).
+There are no third-party package dependencies — the only non-system dependency is the first-party [iUX-MacOS](../iUX-MacOS) sibling library described above. Everything else is built on system frameworks (AppKit, SwiftUI, PDFKit, AVFoundation, ImageIO, Core Image + Metal, plus NaturalLanguage, Accelerate, Vision, SQLite, and a weak-linked FoundationModels for Ask).
 
 Codesigning uses a local `FileMaster Dev` code-signing certificate if one exists in your keychain, otherwise it falls back to ad-hoc.
 
