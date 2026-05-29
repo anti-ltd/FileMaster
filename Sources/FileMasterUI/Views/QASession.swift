@@ -32,14 +32,21 @@ final class QASession: ObservableObject {
         startIndexing()
     }
 
-#if APPSTAGE
+#if APPSTAGE || FILEMASTER_SHOWCASE
     /// Capture-only: a ready session with a pre-built transcript, no indexing or
-    /// LLM. Compiled out of normal/release builds.
+    /// LLM. Used by appstage screenshots and the reel showcase. Compiled out of
+    /// normal/release builds.
     init(demoMessages: [ChatMessage], fileCount: Int) {
         self.urls = []
         self.fileCount = fileCount
         self.messages = demoMessages
         self.phase = .ready
+    }
+
+    /// Capture-only: replace the transcript, for animating a staged reveal
+    /// (question → thinking → answer) in the showcase reel.
+    func demoSet(_ messages: [ChatMessage]) {
+        self.messages = messages
     }
 #endif
 

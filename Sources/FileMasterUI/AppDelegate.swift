@@ -26,6 +26,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         #if APPSTAGE
         if AppStageCapture.state != nil { return }
         #endif
+        // Reel showcase recorder skips the single-instance lock so it can run
+        // alongside a real FileMaster while recording. Compiled out of normal
+        // builds (FILEMASTER_SHOWCASE only).
+        #if FILEMASTER_SHOWCASE
+        if ShowcaseRunner.isActive { return }
+        #endif
         // Single instance only. A file lock is the race-safe source of truth:
         // `flock` is atomic, so exactly one process can hold it — two launches
         // racing at the same instant can't both bow out (a symmetric "is another
@@ -71,6 +77,14 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         #if APPSTAGE
         if let state = AppStageCapture.state {
             AppStageCapture.run(state: state)
+            return
+        }
+        #endif
+        // Reel showcase: when launched with `--showcase`, record one 9:16 cycle
+        // to the Desktop and quit. No menu bar, no dens, no live services.
+        #if FILEMASTER_SHOWCASE
+        if ShowcaseRunner.isActive {
+            ShowcaseRunner.runAutomated()
             return
         }
         #endif
@@ -213,6 +227,13 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(NSMenuItem(title: "Settings", action: #selector(showSettings),
                                 keyEquivalent: ",", target: self, symbol: "gearshape"))
 
+        #if FILEMASTER_SHOWCASE
+        // Reel showcase — only in `--showcase` builds. Opens the preview window
+        // with manual Play / Record controls.
+        menu.addItem(NSMenuItem(title: "Reel Showcase…", action: #selector(showReel),
+                                keyEquivalent: "", target: self, symbol: "video.fill"))
+        #endif
+
         menu.addItem(.separator())
         let quitItem = NSMenuItem(title: "Quit",
                                   action: #selector(NSApplication.terminate(_:)),
@@ -298,6 +319,12 @@ public class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func showSettings() {
         SettingsWindowOpener.open()
     }
+
+    #if FILEMASTER_SHOWCASE
+    @objc private func showReel() {
+        ReelWindowOpener.open()
+    }
+    #endif
 }
 
 private extension NSMenuItem {

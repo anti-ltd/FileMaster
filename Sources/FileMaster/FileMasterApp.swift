@@ -33,6 +33,18 @@ struct FileMasterApp: App {
         .defaultSize(width: 740, height: 560)
         .windowToolbarStyle(.unified)
 
+        #if FILEMASTER_SHOWCASE
+        // Reel showcase — only in `--showcase` builds. The preview window with
+        // manual Play / Record controls. See Sources/FileMasterUI/Showcase.
+        Window("FileMaster Reel", id: ReelWindowID.id) {
+            ReelSceneView()
+                .onAppear { NSApp.setActivationPolicy(.regular) }
+                .onDisappear { NSApp.setActivationPolicy(.accessory) }
+        }
+        .defaultSize(width: 360, height: 712)
+        .windowResizability(.contentSize)
+        #endif
+
         Settings { EmptyView() }
     }
 }

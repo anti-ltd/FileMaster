@@ -45,13 +45,29 @@ NOTARY_KEY     ?= $(HOME)/.appstoreconnect/private_keys/AuthKey_$(NOTARY_KEY_ID)
 #   -dead_strip    remove unreferenced symbols at link time
 RELEASE_FLAGS  := -Xswiftc -Osize -Xswiftc -wmo -Xlinker -dead_strip
 
+# Reel showcase — pass SHOWCASE=1 to compile in the temporary self-recording
+# "FileMaster Reel" (Sources/FileMasterUI/Showcase/, gated by the
+# FILEMASTER_SHOWCASE flag). Off by default so production builds stay clean.
+#   make showcase           # build + record one reel to ~/Desktop (fully auto)
+#   make run SHOWCASE=1      # manual: app gains a "Reel Showcase…" menu item
+ifdef SHOWCASE
+SWIFT_FLAGS += -Xswiftc -DFILEMASTER_SHOWCASE
+endif
+
+# Add the Screen Recording usage string to the bundle Info.plist — but only for
+# SHOWCASE builds, so the shipped plist stays clean. Expands to nothing when
+# SHOWCASE is unset. $(1) = path to Info.plist.
+define add_showcase_plist_keys
+$(if $(SHOWCASE),/usr/libexec/PlistBuddy -c "Add :NSScreenCaptureUsageDescription string FileMaster uses screen recording to export the showcase reel video." "$(1)")
+endef
+
 BIN_PATH       = $(shell $(SWIFT) build -c $(CONFIG) --show-bin-path)
 
 # app-arently lives as a sibling checkout; used by `make screenshot`.
 APPBIN ?= ../app-arently/.build/release/app-arently
 
 .PHONY: all build bundle run debug stop clean format help icon release \
-        bundle-app version bump test dmg build-mas dist dist-manifest screenshot reset
+        bundle-app version bump test dmg build-mas dist dist-manifest screenshot reset showcase
 
 all: build
 
@@ -62,6 +78,7 @@ help:
 	@echo "  make run        — bundle + relaunch app"
 	@echo "  make release    — size-optimised bundle, stripped + signed (FileMaster Dev cert if present, else ad-hoc)"
 	@echo "  make debug      — debug build + run in foreground"
+	@echo "  make showcase   — build + record one 9:16 reel to ~/Desktop (fully automated)"
 	@echo "  make stop       — kill running FileMaster"
 	@echo "  make clean      — swift package clean + remove build/"
 	@echo "  make icon       — render AppIcon.icns from AppIconRenderer"
@@ -75,7 +92,7 @@ help:
 	@echo "  make dist       — Developer ID + hardened-runtime + notarize + staple + DMG + manifest"
 
 build:
-	$(SWIFT) build -c $(CONFIG) --product $(APP_NAME) $(RELEASE_FLAGS)
+	$(SWIFT) build -c $(CONFIG) --product $(APP_NAME) $(RELEASE_FLAGS) $(SWIFT_FLAGS)
 
 icon: build
 	@# The renderer is opt-in: when the binary supports --icon we regenerate
@@ -113,6 +130,7 @@ bundle: build
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@cp "$(BIN_PATH)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
 	@cp "$(INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	@$(call add_showcase_plist_keys,$(APP_BUNDLE)/Contents/Info.plist)
 	@if [ -f "$(ICNS)" ]; then cp "$(ICNS)" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; fi
 	@# Strip local symbols before codesigning. -x = drop non-globals.
 	@$(STRIP) -x "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" 2>/dev/null || true
@@ -129,16 +147,32 @@ run: stop bundle
 	@echo "→ launched $(APP_NAME)"
 
 debug:
-	$(SWIFT) build -c debug --product $(APP_NAME)
+	$(SWIFT) build -c debug --product $(APP_NAME) $(SWIFT_FLAGS)
 	@rm -rf "$(APP_BUNDLE)"
 	@mkdir -p "$(APP_BUNDLE)/Contents/MacOS"
 	@mkdir -p "$(APP_BUNDLE)/Contents/Resources"
 	@cp "$(shell $(SWIFT) build -c debug --show-bin-path)/$(APP_NAME)" "$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
 	@cp "$(INFO_PLIST)" "$(APP_BUNDLE)/Contents/Info.plist"
+	@$(call add_showcase_plist_keys,$(APP_BUNDLE)/Contents/Info.plist)
 	@if [ -f "$(ICNS)" ]; then cp "$(ICNS)" "$(APP_BUNDLE)/Contents/Resources/AppIcon.icns"; fi
 	@$(CODESIGN) --force --deep --sign "$(SIGN_ID)" --entitlements "$(ENTITLEMENTS)" "$(APP_BUNDLE)"
 	@$(MAKE) stop
 	@"$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)"
+
+# ──────────────────────────────────────────────────────────────────────────
+# Reel showcase — the whole workflow in one command.
+#
+# Builds with the reel compiled in (FILEMASTER_SHOWCASE), then launches the
+# bundled app with `--showcase`: it records one 9:16 cycle to ~/Desktop,
+# reveals the MP4 in Finder, and quits. Runs in the foreground so you see
+# progress; returns when the recording is done.
+#
+# First run triggers the Screen Recording permission prompt — enable FileMaster
+# under System Settings ▸ Privacy & Security ▸ Screen Recording, then re-run.
+showcase:
+	@$(MAKE) --no-print-directory SHOWCASE=1 bundle
+	@echo "→ recording reel (foreground; the MP4 opens on your Desktop when done)"
+	@"$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" --showcase
 
 stop:
 	@pkill -x $(EXEC_NAME) 2>/dev/null || true

@@ -67,6 +67,11 @@ public struct SettingsWindowRootView: View {
         // `AppDelegate` closes the window right after, but the captured
         // action stays valid for the process lifetime.
         .background(SettingsWindowOpenerBridge())
+        // Reel showcase — installs the reel preview window opener (see
+        // Showcase/). Compiled out of normal builds.
+        #if FILEMASTER_SHOWCASE
+        .background(ReelWindowOpenerBridge())
+        #endif
     }
 }
 
