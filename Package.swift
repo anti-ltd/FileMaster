@@ -10,6 +10,8 @@ let hasAITests   = FileManager.default.fileExists(
     atPath: repoRoot.appendingPathComponent("Tests/FileMasterAITests").path)
 let hasCoreTests = FileManager.default.fileExists(
     atPath: repoRoot.appendingPathComponent("Tests/FileMasterCoreTests").path)
+let hasUITests   = FileManager.default.fileExists(
+    atPath: repoRoot.appendingPathComponent("Tests/FileMasterUITests").path)
 
 var targets: [Target] = [
         .target(
@@ -81,6 +83,16 @@ if hasCoreTests {
             name: "FileMasterCoreTests",
             dependencies: ["FileMasterCore"],
             path: "Tests/FileMasterCoreTests"
+        )
+    )
+}
+
+if hasUITests {
+    targets.append(
+        .testTarget(
+            name: "FileMasterUITests",
+            dependencies: ["FileMasterUI"],
+            path: "Tests/FileMasterUITests"
         )
     )
 }

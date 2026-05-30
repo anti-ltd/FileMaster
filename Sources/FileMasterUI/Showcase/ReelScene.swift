@@ -138,35 +138,109 @@ enum ReelDemo {
     //    Stable per-turn ids so each answer fills its own bubble in place — the
     //    "Thinking…" placeholder becomes the answer with no crossfade flicker,
     //    exactly like the app's real streaming.
+    // Stable per-message ids so each bubble fills in place across reveal phases
+    // (the "Thinking…" placeholder becomes the answer with no remount flicker).
+    private static let user1ID = UUID()
+    private static let user2ID = UUID()
     private static let turn1ID = UUID()
     private static let turn2ID = UUID()
-
-    static let askUser1 = ChatMessage(role: .user, text: "what's even in this den? i forgot 💀")
-    static let askUser2 = ChatMessage(role: .user, text: "...keep pretending")
 
     static func thinking(_ id: UUID) -> ChatMessage {
         ChatMessage(id: id, role: .assistant, text: "", isStreaming: true)
     }
 
-    static let askAnswer1: ChatMessage = {
+    /// One TikTok joke: a two-beat Ask exchange (the AI roasts the user's own
+    /// den with a real [1] citation, the user concedes, the AI flexes on-device).
+    /// Every variant reuses the exact same visuals, timeline and audio — only the
+    /// text and the cited file change — so adding a reel is just adding a script.
+    struct ReelScript {
+        let user1: String
+        let answer1: String       // include "[1]" where the citation chip should read
+        let citeFile: Int         // index into denFiles for the [1] source
+        let citeText: String
+        let citeLines: ClosedRange<Int>
+        let user2: String
+        let answer2: String       // the on-device payoff
+        // When true, skip the file-drop den intro and open straight on the Ask
+        // chat — the chat is the whole video. (The drop-montage cuts didn't land
+        // as well as the chat itself.)
+        var chatOnly = false
+    }
+
+    /// Pick a reel by name (see ShowcaseRunner / `make reel REEL=<name>`).
+    static let scripts: [String: ReelScript] = [
+        // The original — keep as the default "tour".
+        "tour": ReelScript(
+            user1: "what's even in this den? i forgot 💀",
+            answer1: "A contract you never signed [1], a moodboard from 2am, and a 47MB “walkthrough.mov” you'll never watch. Rundown, or shall we keep pretending?",
+            citeFile: 1, citeText: "Employment Agreement (draft). Signature block: blank.", citeLines: 1...3,
+            user2: "...keep pretending",
+            answer2: "Respect. 🫡 Filed under “future me's problem.” Btw — I read every one of these right here on your Mac. Nothing touched the cloud. 🔒"),
+
+        // "messy" — the relatable Downloads-folder roast. Chat-only.
+        "messy": ReelScript(
+            user1: "be honest. how bad is it in here?",
+            answer1: "Six files, zero structure. A Q3 report you skimmed once [1], a “moodboard” that's three gradients, and a contract aging like milk. It's giving chaos.",
+            citeFile: 0, citeText: "Q3 Report — revenue up 23% YoY. You opened this once.", citeLines: 9...12,
+            user2: "...so what do i do",
+            answer2: "Drag, drop, ask, zip, convert — all in here. And I judged your whole mess on-device. Your shame never left the Mac. 🔒",
+            chatOnly: true),
+
+        // "lawyer" — the unsigned-contract bit. Chat-only.
+        "lawyer": ReelScript(
+            user1: "tldr this contract, i'm not reading it",
+            answer1: "They get 30 days notice, they own your work-hours output, and you get a signature line you still haven't signed [1]. Bold strategy.",
+            citeFile: 1, citeText: "Employment Agreement — 30-day notice. Signature block: blank.", citeLines: 4...9,
+            user2: "i'll sign it later",
+            answer2: "Sure you will. Meanwhile I read every page right here — no cloud, no “oops we trained on your contract.” 🔒",
+            chatOnly: true),
+
+        // "snoop" — the privacy flex. The AI admits it read everything… then
+        // lands that none of it ever left the Mac. Chat-only.
+        "snoop": ReelScript(
+            user1: "wait… you can read ALL my files?",
+            answer1: "Every word. Your Q3 numbers [1], the contract you didn't sign, that 2am moodboard — yeah, I read it.",
+            citeFile: 0, citeText: "Q3 Report — revenue +23% YoY, churn 2.1%. Slide 9.", citeLines: 9...12,
+            user2: "should i be scared",
+            answer2: "Nope. I read it all right here on your Mac. No cloud, no servers, no “we value your privacy” email. 🔒",
+            chatOnly: true),
+
+        // "deadline" — the AI keeps the receipts on what you were meant to do.
+        // Chat-only.
+        "deadline": ReelScript(
+            user1: "what was i supposed to do this week 😭",
+            answer1: "Per your own notes: ship 1.0, sign the contract, and stop hoarding 47MB “walkthrough” clips [1]. Progress so far: none.",
+            citeFile: 2, citeText: "Release Notes — FileMaster 1.0 ship checklist.", citeLines: 1...3,
+            user2: "rude. but fair.",
+            answer2: "I keep the receipts — all of them, on-device. Now go sign the contract before I bring it up again. 🔒",
+            chatOnly: true),
+    ]
+
+    /// The active script, exposed so the director can read its `chatOnly` flag.
+    static var current: ReelScript { scripts[scriptName] ?? scripts["tour"]! }
+
+    /// Which script the next render uses. Set by ShowcaseRunner before recording.
+    static var scriptName = "tour"
+    private static var script: ReelScript { scripts[scriptName] ?? scripts["tour"]! }
+
+    static var askUser1: ChatMessage { ChatMessage(id: user1ID, role: .user, text: script.user1) }
+    static var askUser2: ChatMessage { ChatMessage(id: user2ID, role: .user, text: script.user2) }
+
+    static var askAnswer1: ChatMessage {
+        let s = script
         let chunk = Chunk(
-            sourceURL: denFiles[1], ordinal: 0,           // Contract.docx
-            text: "Employment Agreement (draft). Signature block: blank.",
-            locator: .textRange(charRange: 0..<53, lineRange: 1...3)
+            sourceURL: denFiles[s.citeFile], ordinal: 0,
+            text: s.citeText,
+            locator: .textRange(charRange: 0..<max(1, min(s.citeText.count, 200)), lineRange: s.citeLines)
         )
         let citation = Citation(id: 1, chunk: StoredChunk(id: 1, chunk: chunk), score: 0.95)
-        return ChatMessage(
-            id: turn1ID, role: .assistant,
-            text: "A contract you never signed [1], a moodboard from 2am, and a 47MB “walkthrough.mov” you'll never watch. Rundown, or shall we keep pretending?",
-            citations: [citation],
-            isStreaming: false
-        )
-    }()
+        return ChatMessage(id: turn1ID, role: .assistant, text: s.answer1,
+                           citations: [citation], isStreaming: false)
+    }
 
-    static let askAnswer2 = ChatMessage(
-        id: turn2ID, role: .assistant,
-        text: "Respect. 🫡 Filed under “future me's problem.” Btw — I read every one of these right here on your Mac. Nothing touched the cloud. 🔒"
-    )
+    static var askAnswer2: ChatMessage {
+        ChatMessage(id: turn2ID, role: .assistant, text: script.answer2)
+    }
 
     /// Messages for an Ask reveal phase:
     /// 1 q1 · 2 thinking · 3 answer1 · 4 q2 · 5 thinking · 6 answer2.
@@ -410,7 +484,9 @@ final class ReelDirector: @unchecked Sendable, ReelControl {
     var bumperOpacity = 0.0
     var bumperScale = 0.8
 
-    let cycleLength = 15.5
+    // Chat-only variants drop the file-drop intro, so they run shorter.
+    let cycleLength = ReelDemo.current.chatOnly ? 12.5 : 15.5
+    private var chatOnly: Bool { ReelDemo.current.chatOnly }
 
     private var events: [(t: Double, run: () -> Void)] = []
     private var elapsed = 0.0
@@ -515,6 +591,8 @@ final class ReelDirector: @unchecked Sendable, ReelControl {
     // MARK: - Timeline — beat-synced at 120 BPM (every 0.5 s); cuts land on the beat.
 
     private func buildTimeline() {
+        if chatOnly { buildChatOnlyTimeline(); return }
+
         // Four-on-the-floor kick pulse drives the montage; cuts land on the beat.
         for i in 0...25 {                  // 0.5 … 13.0 s
             let t = 0.5 + Double(i) * 0.5
@@ -572,6 +650,54 @@ final class ReelDirector: @unchecked Sendable, ReelControl {
         let fadeSteps = 8
         for i in 0..<fadeSteps {
             let t = 14.2 + Double(i) * (1.0 / Double(fadeSteps))
+            let vol = 1.0 - Double(i + 1) / Double(fadeSteps)
+            at(t) { self.audio.setVolume(Float(vol)) }
+        }
+    }
+
+    // MARK: - Chat-only timeline (cycleLength 12.5)
+    //
+    // No file-drop intro: open straight on the Ask card and let the two-beat
+    // exchange carry the whole video, then the bumper. Same audio + bumper
+    // machinery as the full timeline.
+    private func buildChatOnlyTimeline() {
+        // Light kick bed, stopping before the closing card.
+        for i in 0...21 {
+            let t = 0.5 + Double(i) * 0.5
+            if t > 9.5 { break }
+            at(t) { self.audio.play("kick", gain: 0.26) }
+        }
+
+        // Brand in, then the chat card whips on immediately.
+        at(0.2) {
+            self.audio.play("whoosh")
+            withAnimation(.spring(response: 0.5, dampingFraction: 0.55)) { self.brandScale = 1.0 }
+            self.haloPulse()
+        }
+        at(0.5) { self.cut(to: 3); self.askPhase = 1 }                   // question 1 slides in
+        at(1.3) { self.askPhase = 2; self.audio.play("pop") }           // thinking…
+        at(2.2) { self.askPhase = 3; self.audio.play("ding") }          // the rundown lands (cited)
+        at(5.5) { self.askPhase = 4; self.audio.play("pop", gain: 0.6) } // reply (3.3s to read)
+        at(6.1) { self.askPhase = 5 }                                    // thinking…
+        at(7.0) { self.askPhase = 6; self.audio.play("ding") }          // on-device punchline
+
+        // ── Riser into the closing bumper (≈3s on the punchline). ──
+        at(10.0) { self.audio.play("riser") }
+        at(10.3) { withAnimation(.easeIn(duration: 0.25)) { self.montageOpacity = 0 } }
+        at(10.45) {
+            self.audio.play("kick", gain: 0.9)
+            self.audio.play("ding", gain: 0.7)
+            self.haloOpacity = 1.0
+            withAnimation(.easeOut(duration: 0.9)) { self.haloOpacity = 0.6 }
+            withAnimation(.spring(response: 0.55, dampingFraction: 0.58)) {
+                self.bumperOpacity = 1; self.bumperScale = 1.0
+            }
+        }
+
+        // Audio fade — ends ≥0.15 s before the 12.5 s reset.
+        let fadeSteps = 8
+        for i in 0..<fadeSteps {
+            let t = 11.1 + Double(i) * (1.0 / Double(fadeSteps))
             let vol = 1.0 - Double(i + 1) / Double(fadeSteps)
             at(t) { self.audio.setVolume(Float(vol)) }
         }

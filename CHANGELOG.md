@@ -7,6 +7,19 @@ and the project follows [Semantic Versioning](https://semver.org/spec/v2.0.0.htm
 ## [Unreleased]
 
 ### Added
+- **Vector (SVG) editing** — opening a `.svg` in the image editor now launches a
+  native vector editor instead of the pixel tools. Select shapes from a list or
+  by clicking the canvas; change **fill colour**, **scale**, **rotation**, and
+  **position**; **delete** or **reset** a shape; and in **Nodes** mode drag a
+  path's bezier anchors and control handles directly. Full undo/redo. Save into a
+  new den or overwrite the original. Reachable via **Edit Vector…** on any single
+  `.svg`. All on-device — paths are parsed, rendered, and re-serialized locally,
+  no network.
+- **Image → Vectorize…** — trace a raster image (logo, icon, screenshot,
+  illustration) into an editable SVG on-device, using Vision contour detection
+  over a quantised colour palette. Choose the number of colours (2–12) and the
+  contour detail; the result opens straight into the vector editor. No AI model
+  or network.
 - **Image → Upscale…** — enlarge images on-device with Lanczos resampling
   (`CILanczosScaleTransform`), no AI model or network. Fully configurable like
   Resize/Compress: target by **factor** (2×, 4×…), exact **width**, or

@@ -67,7 +67,7 @@ BIN_PATH       = $(shell $(SWIFT) build -c $(CONFIG) --show-bin-path)
 APPBIN ?= ../app-arently/.build/release/app-arently
 
 .PHONY: all build bundle run debug stop clean format help icon release \
-        bundle-app version bump test dmg build-mas dist dist-manifest screenshot reset showcase showcase-wide
+        bundle-app version bump test dmg build-mas dist dist-manifest screenshot reset showcase showcase-wide reel showcases
 
 all: build
 
@@ -179,6 +179,23 @@ showcase-wide:
 	@$(MAKE) --no-print-directory SHOWCASE=1 bundle
 	@echo "→ recording wide showcase (foreground; the MP4 opens on your Desktop when done)"
 	@"$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" --showcase-wide
+
+# Record one named 9:16 reel variant: `make reel REEL=snoop`.
+# Names: tour (full intro) · messy · lawyer · snoop · deadline (chat-only).
+REEL ?= tour
+reel:
+	@$(MAKE) --no-print-directory SHOWCASE=1 bundle
+	@echo "→ recording reel '$(REEL)' (the MP4 opens on your Desktop when done)"
+	@"$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" --showcase=$(REEL)
+
+# Record every 9:16 reel variant back-to-back (one build, several captures).
+showcases:
+	@$(MAKE) --no-print-directory SHOWCASE=1 bundle
+	@for r in tour messy lawyer snoop deadline; do \
+		echo "→ recording reel '$$r'…"; \
+		"$(APP_BUNDLE)/Contents/MacOS/$(EXEC_NAME)" --showcase=$$r || true; \
+	done
+	@echo "✓ all reels saved to ~/Desktop"
 
 stop:
 	@pkill -x $(EXEC_NAME) 2>/dev/null || true

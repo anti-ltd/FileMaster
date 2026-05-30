@@ -18,6 +18,14 @@ extension Notification.Name {
     static let qaClosed             = Notification.Name("qaClosed")
 }
 
+/// One cached editor per file tab, of whichever kind the file needs — a raster
+/// `ImageEditModel` or a vector `SVGEditModel`. Lets the den's `editModels` cache
+/// hold both and route each tab to the right editor layout.
+enum EditorModel {
+    case raster(ImageEditModel)
+    case vector(SVGEditModel)
+}
+
 struct ShelfView: View {
     var onClose: (() -> Void)? = nil
     var onResize: ((CGSize) -> Void)? = nil
@@ -63,7 +71,7 @@ struct ShelfView: View {
     @State private var isEditing = false
     /// While editing, the file list doubles as editor tabs: one cached model per
     /// image so switching back and forth preserves each image's edits.
-    @State private var editModels: [URL: ImageEditModel] = [:]
+    @State private var editModels: [URL: EditorModel] = [:]
     @State private var currentEditURL: URL? = nil
     /// Embedded Quick Look state — analogous to the editor: the den splits
     /// expanded grid + preview pane, and clicking another file switches it.
@@ -148,7 +156,7 @@ struct ShelfView: View {
                     : Color.white.opacity(0.15))
 
             if isEditing, let url = currentEditURL, let editModel = editModels[url] {
-                editSplitView(editModel, url: url)
+                editSplitDispatch(editModel, url: url)
                     .transition(.opacity)
             } else if isPreviewing, let url = currentPreviewURL {
                 previewSplitView(url: url)
@@ -550,6 +558,33 @@ struct ShelfView: View {
 
     // MARK: - Edit split (files left, editor right)
 
+    /// Route the cached model to the matching editor layout: raster images get the
+    /// pixel editor, SVGs the vector editor.
+    @ViewBuilder
+    private func editSplitDispatch(_ model: EditorModel, url: URL) -> some View {
+        switch model {
+        case .raster(let m): editSplitView(m, url: url)
+        case .vector(let m): svgEditSplitView(m, url: url)
+        }
+    }
+
+    /// Vector counterpart to `editSplitView`: file list | SVG viewer | SVG controls.
+    private func svgEditSplitView(_ model: SVGEditModel, url: URL) -> some View {
+        HStack(spacing: 0) {
+            expandedView
+                .frame(width: expandedSize.width)
+            Divider().opacity(0.4)
+            SVGEditorView(model: model, onClose: { withAnimation { isEditing = false } })
+                .frame(maxWidth: .infinity)
+                .id(url)
+            Divider().opacity(0.4)
+            SVGEditorControlsPane(model: model)
+                .frame(width: editControlsWidth)
+                .id(url)
+        }
+        .frame(width: currentSize.width, height: currentSize.height)
+    }
+
     private func editSplitView(_ model: ImageEditModel, url: URL) -> some View {
         HStack(spacing: 0) {
             expandedView
@@ -615,10 +650,17 @@ struct ShelfView: View {
     /// already editing — the file list acts as editor tabs. Each image keeps its
     /// own cached model so its edits survive switching away and back.
     private func enterEdit(url: URL) {
-        guard ImageConvert.isImage(url) else { NSSound.beep(); return }
         if editModels[url] == nil {
-            guard let model = ImageEditModel(url: url) else { NSSound.beep(); return }
-            editModels[url] = model
+            // SVG opens the vector editor; raster images open the pixel editor.
+            if ImageConvert.isSVG(url) {
+                guard let model = SVGEditModel(url: url) else { NSSound.beep(); return }
+                editModels[url] = .vector(model)
+            } else if ImageConvert.isImage(url) {
+                guard let model = ImageEditModel(url: url) else { NSSound.beep(); return }
+                editModels[url] = .raster(model)
+            } else {
+                NSSound.beep(); return
+            }
         }
         currentEditURL = url
         // Highlight the active tab in the list.
@@ -637,7 +679,7 @@ struct ShelfView: View {
     /// preview tab; otherwise it's normal selection.
     private func handleItemClick(_ item: ShelfItem, modifiers: NSEvent.ModifierFlags) {
         let plain = !modifiers.contains(.command) && !modifiers.contains(.shift)
-        if isEditing, ImageConvert.isImage(item.url), plain {
+        if isEditing, ImageConvert.isEditable(item.url), plain {
             enterEdit(url: item.url)
         } else if isPreviewing, plain {
             enterPreview(urls: [item.url])
@@ -792,7 +834,7 @@ struct ShelfView: View {
         }
         // If the edited tab was removed, switch to another image or leave editing.
         if let current = currentEditURL, set.contains(current) {
-            if let next = items.first(where: { ImageConvert.isImage($0.url) })?.url {
+            if let next = items.first(where: { ImageConvert.isEditable($0.url) })?.url {
                 enterEdit(url: next)
             } else {
                 withAnimation { isEditing = false }

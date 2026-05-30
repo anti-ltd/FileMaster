@@ -130,6 +130,7 @@ enum FileActions {
 
         let hasDir = urls.contains { isDirectory($0) }
         let allImages = urls.allSatisfy { isImage($0) } && !urls.isEmpty
+        let allSVGs = urls.allSatisfy { ImageConvert.isSVG($0) } && !urls.isEmpty
         let allPrintable = urls.allSatisfy { isPrintable($0) } && !urls.isEmpty
         let allArchives = urls.allSatisfy { isArchive($0) } && !urls.isEmpty
         let allPDFs = urls.allSatisfy { PDFTools.isPDF($0) } && !urls.isEmpty
@@ -176,6 +177,12 @@ enum FileActions {
         }
         if allImages {
             menu.addItem(imageToolsMenu(bridge: bridge, urls: urls))
+        }
+        // SVGs aren't raster images (no resize/upscale/etc.), so they get a single
+        // direct entry into the vector editor instead of the Image submenu.
+        if allSVGs, urls.count == 1, bridge.onEdit != nil {
+            menu.addItem(item("Edit Vector…", "pencil.and.outline",
+                              #selector(ActionBridge.editVector), bridge))
         }
         if allPDFs {
             menu.addItem(pdfToolsMenu(bridge: bridge, count: urls.count))
@@ -269,6 +276,8 @@ enum FileActions {
                          #selector(ActionBridge.resizeImage), bridge))
         sub.addItem(item("Upscale…", "plus.magnifyingglass",
                          #selector(ActionBridge.upscaleImage), bridge))
+        sub.addItem(item("Vectorize…", "scribble.variable",
+                         #selector(ActionBridge.vectorizeImage), bridge))
         sub.addItem(item("Compress Image…", "arrow.down.right.and.arrow.up.left",
                          #selector(ActionBridge.compressImage), bridge))
 
@@ -409,6 +418,12 @@ final class ActionBridge: NSObject {
     @objc func editImage() {
         let images = urls.filter { ImageConvert.isImage($0) }
         guard let target = images.first else { return }
+        onEdit?([target])
+    }
+
+    @objc func editVector() {
+        let svgs = urls.filter { ImageConvert.isSVG($0) }
+        guard let target = svgs.first else { return }
         onEdit?([target])
     }
 
@@ -617,6 +632,24 @@ final class ActionBridge: NSObject {
                         ActionPopover.shared.dismiss()
                         ActionBridge.stage("Upscaling", inputs: inputs) { url, _ in
                             ImageUpscale.process([url], options: opts)
+                        }
+                    },
+                    onCancel: { ActionPopover.shared.dismiss() })
+            }
+        }
+    }
+
+    @objc func vectorizeImage() {
+        guard let host else { return }
+        let inputs = urls
+        MainActor.assumeIsolated {
+            ActionPopover.shared.present(from: host) {
+                ImageVectorizePanel(
+                    urls: inputs,
+                    onVectorize: { opts in
+                        ActionPopover.shared.dismiss()
+                        ActionBridge.stage("Vectorizing", inputs: inputs) { url, progress in
+                            RasterVectorizer.vectorizeToFile(url, options: opts, progress: progress).map { [$0] } ?? []
                         }
                     },
                     onCancel: { ActionPopover.shared.dismiss() })

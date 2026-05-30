@@ -17,14 +17,23 @@ public enum ShowcaseRunner {
     /// True when this process was launched to record a reel. AppDelegate
     /// checks this before standing up the menu bar / den services.
     public static var isActive: Bool {
-        CommandLine.arguments.contains("--showcase")
-            || CommandLine.arguments.contains("--showcase-wide")
+        CommandLine.arguments.contains { $0 == "--showcase" || $0 == "--showcase-wide"
+            || $0.hasPrefix("--showcase=") }
     }
 
     /// `--showcase-wide` records the 16:9 long-form feature tour instead of the
     /// 9:16 reel.
     private static var isWide: Bool {
         CommandLine.arguments.contains("--showcase-wide")
+    }
+
+    /// `--showcase=<name>` picks a 9:16 reel variant (see ReelDemo.scripts);
+    /// bare `--showcase` is the default "tour".
+    private static var reelName: String {
+        for arg in CommandLine.arguments where arg.hasPrefix("--showcase=") {
+            return String(arg.dropFirst("--showcase=".count))
+        }
+        return "tour"
     }
 
     // Held for the process lifetime so neither is deallocated mid-recording.
@@ -69,7 +78,8 @@ public enum ShowcaseRunner {
                 rootView: { [d] in AnyView(WideSceneViewBound(director: d)) }
             )
         } else {
-            print("● Recording FileMaster reel (9:16, ~16 s)… the MP4 will open on your Desktop when done.")
+            ReelDemo.scriptName = reelName
+            print("● Recording FileMaster reel “\(reelName)” (9:16, ~16 s)… the MP4 will open on your Desktop when done.")
             let d = ReelDirector()
             control = d
             rec = ReelRecorder(
@@ -80,9 +90,23 @@ public enum ShowcaseRunner {
             )
         }
         recorder = rec
+        let label = isWide ? "wide" : reelName
         rec.onFinished = { url in
             if let url {
-                print("✓ Saved \(url.path)")
+                // Rename the recorder's generic output so each reel is
+                // identifiable, e.g. FileMaster-messy-20260529-143001.mp4.
+                let stamp = url.deletingPathExtension().lastPathComponent
+                    .split(separator: "-").suffix(2).joined(separator: "-")
+                let dest = url.deletingLastPathComponent()
+                    .appendingPathComponent("FileMaster-\(label)-\(stamp).mp4")
+                let final: URL
+                if (try? FileManager.default.moveItem(at: url, to: dest)) != nil {
+                    NSWorkspace.shared.activateFileViewerSelecting([dest])
+                    final = dest
+                } else {
+                    final = url
+                }
+                print("✓ Saved \(final.path)")
             } else {
                 print("✗ Recording failed — see Console for SCStream errors.")
             }

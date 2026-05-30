@@ -81,6 +81,19 @@ enum ImageConvert {
         imageExtensions.contains(url.pathExtension.lowercased())
     }
 
+    /// SVG is a *vector* image: editable in the vector editor, but deliberately
+    /// kept out of `isImage`/`imageExtensions` so the raster tools (resize, upscale,
+    /// compress, convert) never offer themselves for a file they can't process.
+    static func isSVG(_ url: URL) -> Bool {
+        url.pathExtension.lowercased() == "svg"
+    }
+
+    /// Anything the editor can open — a raster image (raster editor) or an SVG
+    /// (vector editor). Used to gate "Edit…" and the den's editor tab routing.
+    static func isEditable(_ url: URL) -> Bool {
+        isImage(url) || isSVG(url)
+    }
+
     /// Type identifiers ImageIO can write on this machine. Used to gate
     /// WebP/AVIF, whose encoders aren't present on every macOS version.
     private static let encodableTypeIDs: Set<String> = {
